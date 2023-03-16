@@ -5,17 +5,13 @@ use std::{path::Path, simd::{usizex2, SimdUint}};
 
 use super::*;
 
-pub const fn empty_wavetable() -> WaveTable {
-    [[0.; WAVE_FRAME_LEN + 1]; FRAMES_PER_WT]
-}
-
 pub const PHASE_RANGE: f32 = WAVE_FRAME_LEN as f32;
 const NUM_WAVETABLES: usize = WAVE_FRAME_LEN.ilog2() as usize + 1;
 const SPECTRUM_SIZE: usize = WAVE_FRAME_LEN / 2 + 1;
 
 type Spectrum = [Complex32; SPECTRUM_SIZE];
 
-pub(super) fn write_wavetable_from_file(path: impl AsRef<Path>, wt: &mut WaveTable) {
+pub(super) fn wavetable_from_file(path: impl AsRef<Path>) -> Vec<WaveFrame> {
     let reader = WavReader::open(path).unwrap();
     let spec = reader.spec();
 
@@ -34,6 +30,10 @@ pub(super) fn write_wavetable_from_file(path: impl AsRef<Path>, wt: &mut WaveTab
         "invalid wavetable size, wavetable size must be {WAVE_FRAME_LEN} x {FRAMES_PER_WT} samples"
     );
 
+    let mut wt = Vec::<WaveFrame>::with_capacity(FRAMES_PER_WT);
+
+    unsafe { wt.set_len(FRAMES_PER_WT) };
+
     for buffer in wt.iter_mut() {
         let (wrap_around, window) = buffer.split_last_mut().unwrap();
 
@@ -44,6 +44,8 @@ pub(super) fn write_wavetable_from_file(path: impl AsRef<Path>, wt: &mut WaveTab
 
         *wrap_around = window[0];
     }
+
+    wt
 }
 
 /// Bandlimited wavetable data structure
@@ -57,7 +59,7 @@ impl BandlimitedWaveTables {
 
         let spectra = spectra_from_wavetable(wt);
 
-        self.data.replace(bandlimited_wavetables(*wt, spectra.as_ref()));
+        self.data.replace(bandlimited_wavetables(wt, spectra.as_ref()));
     }
 
     /// Resample the value at the given `frame` and `phase` `phase_delta` is
@@ -70,8 +72,9 @@ impl BandlimitedWaveTables {
         let array = phase_delta.as_array();
 
         let index = usizex2::splat(126).saturating_sub(
-                usizex2::from_array([array[0].to_bits() as usize, array[1].to_bits() as usize])
-        ) >> usizex2::splat(23);
+            usizex2::from_array([array[0].to_bits() as usize, array[1].to_bits() as usize])
+            >> usizex2::splat(23)
+        );
 
         unsafe {
             // TODO: SIMD this later
@@ -108,7 +111,7 @@ pub fn spectra_from_wavetable(wavetable: &WaveTable) -> Box<[Spectrum ; FRAMES_P
     #[allow(clippy::uninit_vec)]
     unsafe { spectra.set_len(FRAMES_PER_WT) };
 
-    let mut input = [0. ; WAVE_FRAME_LEN];
+    let mut input = fft.make_input_vec();
 
     for (spectrum, window) in spectra.iter_mut().zip(wavetable.iter()) {
         input.copy_from_slice(&window[..WAVE_FRAME_LEN] /* all but the last element */);
@@ -126,22 +129,22 @@ pub fn spectra_from_wavetable(wavetable: &WaveTable) -> Box<[Spectrum ; FRAMES_P
 /// frequecncy spectra. The first will be DC. The second will have one
 /// harmonic, the third 2, the forth 4, the fifth 8, etc...
 pub fn bandlimited_wavetables(
-    wavetable: WaveTable,
+    wavetable: &WaveTable,
     spectra: &[Spectrum; FRAMES_PER_WT],
 ) -> Box<[WaveTable ; NUM_WAVETABLES]> {
 
-    let mut output = Vec::with_capacity(NUM_WAVETABLES);
-    output.push(empty_wavetable());
+    let mut output = Vec::<WaveTable>::with_capacity(NUM_WAVETABLES);
     // SAFETY: len == capacity & elements will be initialized before this function returns
     unsafe { output.set_len(NUM_WAVETABLES) };
+    output[0].iter_mut().for_each(|slice| slice.fill(0.));
 
     let (full_wt, bandlimited_versions) = output.split_last_mut().unwrap();
-    *full_wt = wavetable;
+    full_wt.iter_mut().zip(wavetable.iter()).for_each(|(output, input)| output.copy_from_slice(input));
 
     let mut c2r = realfft::RealFftPlanner::<f32>::new();
     let fft = c2r.plan_fft_inverse(WAVE_FRAME_LEN);
-    let mut scratch = [Complex32::new(0., 0.); SPECTRUM_SIZE];
-    let mut input = scratch;
+    let mut scratch = fft.make_scratch_vec();
+    let mut input = fft.make_input_vec();
 
     let mut partials = 1;
 
@@ -158,7 +161,7 @@ pub fn bandlimited_wavetables(
             fft.process_with_scratch(&mut input, window, &mut scratch)
                 .unwrap();
 
-            let normalize = (window.len() * 2) as f32;
+            let normalize = window.len() as f32;
             window.iter_mut().for_each(|sample| *sample /= normalize);
             *wrap_around = window[0];
         }

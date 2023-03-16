@@ -1,6 +1,8 @@
 #![feature(array_chunks, once_cell, portable_simd)]
 
 pub mod nodes;
+use std::{thread, time::Duration};
+
 use arrayvec::ArrayVec;
 use nodes::*;
 
@@ -59,6 +61,8 @@ impl<T: SeenthStandAlonePlugin, const VOICES: usize> Plugin for SeenthPlugin<T, 
             CentralPanel::default().show(ctx, |ui| {
                 params.ui(ui, setter);
             });
+
+            thread::sleep(Duration::from_secs_f32(1. / 72.))
         })
     }
 
@@ -87,6 +91,8 @@ impl<T: SeenthStandAlonePlugin, const VOICES: usize> Plugin for SeenthPlugin<T, 
     ) -> ProcessStatus {
         let mut next_event = context.next_event();
 
+        self.processor.update_smoothers();
+
         for (i, mut input_frame) in buffer.iter_samples().enumerate() {
             while let Some(event) = next_event {
 
@@ -101,7 +107,7 @@ impl<T: SeenthStandAlonePlugin, const VOICES: usize> Plugin for SeenthPlugin<T, 
                                 nih_plug::util::midi_note_to_freq(
                                     note
                                 ) / context.transport().sample_rate,
-                            )
+                            );
                         };
                     }
 
@@ -120,6 +126,7 @@ impl<T: SeenthStandAlonePlugin, const VOICES: usize> Plugin for SeenthPlugin<T, 
                 next_event = context.next_event();
             }
 
+            // the only audio layout we support is stereo
             let input_frame_simd = unsafe { input_frame.to_simd_unchecked() };
 
             input_frame.from_simd(

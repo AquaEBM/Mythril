@@ -11,7 +11,8 @@ use rand::random;
 
 const MAX_UNISON: usize = 16;
 
-struct WTOscModValues {
+#[derive(Default)]
+struct WTOscParamValues {
     level: f32x2,
     pan: f32x2,
     num_unison_voices: usizex2,
@@ -21,26 +22,18 @@ struct WTOscModValues {
     stereo_pos: f32x2,
 }
 
-impl WTOscParams {
-    fn modulated(&self, voice_idx: usize) -> WTOscModValues {
-        let [lvl_l, lvl_r] = self.detune.get_value(voice_idx);
-        let [pan_l, pan_r] = self.pan.get_value(voice_idx);
+impl WTOscParamValues {
+    fn update(&mut self, params: &WTOscParams) {
+        let [lvl_l, lvl_r] = [params.detune.unmodulated_plain_value() ; 2];
+        let [pan_l, pan_r] = [params.pan.unmodulated_plain_value() ; 2];
 
-        let stereo_pos = [1. - lvl_l, lvl_r].into();
-        let pan = [1. - pan_l, pan_r].into();
-
-        let [frame_l, frame_r] = self.frame.get_value(voice_idx);
-        let [unison_l, unison_r] = self.num_unison_voices.get_value(voice_idx);
-
-        WTOscModValues {
-            level: self.level.get_value(voice_idx).into(),
-            pan,
-            num_unison_voices: [unison_l as usize, unison_r as usize].into(),
-            frame: [frame_l as usize, frame_r as usize].into(),
-            detune_range: self.detune_range.get_value(voice_idx).into(),
-            detune: self.detune.get_value(voice_idx).into(),
-            stereo_pos,
-        }
+        self.level = f32x2::splat(params.level.unmodulated_plain_value());
+        self.pan = [1. - pan_l, pan_r].into();
+        self.num_unison_voices = usizex2::splat(params.num_unison_voices.unmodulated_plain_value() as usize);
+        self.frame = usizex2::splat(params.frame.unmodulated_plain_value() as usize);
+        self.detune_range = f32x2::splat(params.detune_range.unmodulated_plain_value());
+        self.detune = f32x2::splat(params.detune.unmodulated_plain_value());
+        self.stereo_pos = [1. - lvl_l, lvl_r].into();
     }
 }
 
@@ -153,7 +146,7 @@ impl WTOscVoice {
 
         let odd = self.oscillators.len() & 1;
         let accumulator = if odd == 0 {
-            f32x2::from_array([0., 0.])
+            f32x2::splat(0.)
         } else {
             self.oscillators[0].get_sample_from_table(table, frame)
         };
@@ -169,7 +162,7 @@ impl WTOscVoice {
     }
 
     #[inline]
-    fn process(&mut self, params: WTOscModValues, table: &BandlimitedWaveTables) -> f32x2 {
+    fn process(&mut self, params: &WTOscParamValues, table: &BandlimitedWaveTables) -> f32x2 {
         self.update_num_unison_voices(params.num_unison_voices);
         self.update_phases(params.detune_range * params.detune);
 
@@ -181,6 +174,7 @@ impl WTOscVoice {
 
 pub struct WTOsc {
     params: Arc<WTOscParams>,
+    param_values: WTOscParamValues,
     wavetables: BandlimitedWaveTables,
     voices: ArrayVec<WTOscVoice, MAX_POLYPHONY>,
 }
@@ -190,6 +184,7 @@ impl WTOsc {
         Self {
             wavetables: Default::default(),
             params,
+            param_values: Default::default(),
             voices: Default::default(),
         }
     }
@@ -206,18 +201,20 @@ impl Processor for WTOsc {
     }
 
     #[inline]
-    /// pre-condition: inputs.len() = number of voices in self
     fn process(&mut self, _input: f32x2, voice_idx: usize, _editor_open: bool) -> f32x2 {
 
         self.voices[voice_idx].process(
-            self.params.modulated(voice_idx),
+            &self.param_values,
             &self.wavetables
         )
     }
 
     fn initialize(&mut self, _sample_rate: f32) -> (bool, u32) {
+        
+        self.params.load_wavetable();
+        let wavetable = self.params.wavetable.borrow();
         self.wavetables.set_wavetable(
-            self.params.wavetable.borrow().as_slice().try_into().unwrap()
+            wavetable.as_slice().try_into().unwrap()
         );
         (true, 0)
     }
@@ -225,6 +222,12 @@ impl Processor for WTOsc {
     fn reset(&mut self) {
         self.voices.clear()
     }
+
+    fn update_smoothers(&mut self) {
+        self.param_values.update(&self.params);
+    }
+
+    
 }
 
 impl SeenthStandAlonePlugin for WTOscParams {
@@ -235,6 +238,6 @@ impl SeenthStandAlonePlugin for WTOscParams {
     }
 
     fn editor_state(&self) -> Arc<EguiState> {
-        EguiState::from_size(1000, 200)
+        self.editor_state.clone()
     }
 }

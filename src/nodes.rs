@@ -9,7 +9,7 @@ pub use nih_plug_egui::{
 use parking_lot::Mutex;
 use plugin_util::{
     gui::widgets::*,
-    parameter::{Modulable, ParamHandle},
+    parameter::ParamHandle,
 };
 
 use rtrb::{Consumer, Producer};
@@ -28,6 +28,8 @@ pub trait Processor {
     fn initialize(&mut self, sample_rate: f32) -> (bool, u32);
 
     fn reset(&mut self);
+
+    fn update_smoothers(&mut self);
 }
 
 pub type ProcessNode = dyn Processor + Send;
@@ -48,12 +50,6 @@ pub trait SeenthStandAlonePlugin: SeenthNode + Default {
 }
 
 pub const MAX_POLYPHONY: usize = 16;
-
-type ModulableParamHandle<T> = Modulable<T, MAX_POLYPHONY>;
-
-fn modulable<T: Param>(param: T) -> ModulableParamHandle<T> {
-    Modulable::from(param)
-}
 
 pub mod audio_graph;
 pub mod wavetable_oscillator;

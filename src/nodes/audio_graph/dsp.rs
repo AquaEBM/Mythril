@@ -53,6 +53,12 @@ impl Processor for ProcessSchedule {
     fn reset(&mut self) {
         self.nodes.iter_mut().for_each(|node| node.reset());
     }
+
+    fn update_smoothers(&mut self) {
+        self.nodes.iter_mut()
+            .map(AsMut::as_mut)
+            .for_each(Processor::update_smoothers)
+    }
 }
 
 impl ProcessSchedule {
