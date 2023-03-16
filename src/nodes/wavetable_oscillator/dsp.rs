@@ -1,6 +1,7 @@
 use super::{
     wavetable::{BandlimitedWaveTables, PHASE_RANGE},
-    WTOscParams, *,
+    WTOscParams,
+    *,
 };
 
 use std::{iter, ops::Add, simd::{usizex2, StdFloat, simd_swizzle}};
@@ -8,6 +9,11 @@ use std::{iter, ops::Add, simd::{usizex2, StdFloat, simd_swizzle}};
 use arrayvec::ArrayVec;
 use plugin_util::dsp::semitones;
 use rand::random;
+
+fn x2semitones(val: f32x2) -> f32x2 {
+    let &[l, r] = val.as_array();
+    f32x2::from_array([semitones(l), semitones(r)])
+}
 
 const MAX_UNISON: usize = 16;
 
@@ -37,42 +43,11 @@ impl WTOscParamValues {
     }
 }
 
-/// Describes a wavetable oscillator
-#[derive(Default)]
-struct Oscillator {
-    pub phase: f32x2,
-    pub phase_delta: f32x2,
-}
-
-impl Oscillator {
-    fn new(phase: f32) -> Self {
-        Self {
-            phase: f32x2::splat(phase),
-            ..Default::default()
-        }
-    }
-
-    #[inline]
-    fn get_sample_from_table(
-        &self,
-        table: &BandlimitedWaveTables,
-        frame: usizex2,
-    ) -> f32x2 {
-        table.get_sample(self.phase, frame, self.phase_delta)
-    }
-
-    #[inline]
-    fn update_phase(&mut self, phase_delta: f32x2) {
-        self.phase_delta = phase_delta;
-        self.phase = (self.phase + self.phase_delta) % f32x2::splat(PHASE_RANGE);
-    }
-}
-
 #[derive(Default)]
 struct WTOscVoice {
     base_phase_delta: f32x2,
     inv_num_steps: f32x2, // -2. / (self.oscillators.len() - 1)
-    oscillators: ArrayVec<Oscillator, MAX_UNISON>,
+    oscillators: ArrayVec<f32x2, MAX_UNISON>,
 }
 
 impl WTOscVoice {
@@ -89,6 +64,8 @@ impl WTOscVoice {
         // TODO?: You can't really stereo modulate the number of unison voices
         // (or can you?), so, for now, just don't, and use only the left value.
 
+        let num_voices = num_voices;
+
         let new = num_voices.to_array()[0];
 
         let current = self.oscillators.len();
@@ -100,8 +77,9 @@ impl WTOscVoice {
 
         if new > current {
             self.oscillators.extend(
-                iter::repeat_with(|| Oscillator::new(random::<f32>() * PHASE_RANGE))
-                    .take(new - current),
+                iter::repeat_with(||
+                    f32x2::splat(random()) * f32x2::splat(PHASE_RANGE)
+                ).take(new - current)
             );
         } else {
             self.oscillators.truncate(new);
@@ -111,62 +89,46 @@ impl WTOscVoice {
     }
 
     #[inline]
-    fn update_phases(&mut self, detune_range: f32x2) {
+    fn process(&mut self, params: &WTOscParamValues, table: &BandlimitedWaveTables) -> f32x2 {
+
+        self.update_num_unison_voices(params.num_unison_voices);
+        let frame = params.frame;
+
         let odd = self.oscillators.len() & 1;
-        if odd == 1 {
-            self.oscillators[0].update_phase(self.base_phase_delta);
-        }
-        
-        fn x2semitones(val: f32x2) -> f32x2 {
-            let &[l, r] = val.as_array();
-            f32x2::from_array([semitones(l), semitones(r)])
-        }
+        let accumulator = if odd == 1 {
+            self.oscillators[0] += self.base_phase_delta;
+            table.get_sample(self.oscillators[0], frame, self.base_phase_delta)
+        } else {
+            f32x2::splat(0.)
+        };
 
-        let mut tune = x2semitones(detune_range);
-        let tune_delta = x2semitones(detune_range * self.inv_num_steps);
+        let detune = params.detune * params.detune;
 
-        self.oscillators[odd..]
-            .array_chunks_mut()
-            .for_each(|[osc1, osc2]| {
-                osc1.update_phase(self.base_phase_delta * tune);
-                osc2.update_phase(self.base_phase_delta / tune);
-                tune = tune * tune_delta;
-            });
-    }
+        let mut tune = x2semitones(detune);
+        let tune_delta = x2semitones(detune * self.inv_num_steps);
 
-    #[inline]
-    fn get_sample_from_table(
-        &self,
-        table: &BandlimitedWaveTables,
-        frame: usizex2,
-        detune: f32x2,
-    ) -> f32x2 {
         let pan = (detune * f32x2::splat(0.5)).sqrt();
         let rev_pan = simd_swizzle!(pan, [1, 0]);
 
-        let odd = self.oscillators.len() & 1;
-        let accumulator = if odd == 0 {
-            f32x2::splat(0.)
-        } else {
-            self.oscillators[0].get_sample_from_table(table, frame)
+        let advance_and_get_sample = |[osc1, osc2]: &mut [f32x2 ; 2]| {
+            let mut phase_delta = self.base_phase_delta * tune;
+        
+            ({
+                *osc1 += phase_delta;
+                table.get_sample(*osc1, frame, phase_delta) * pan
+            }) + {
+                phase_delta = self.base_phase_delta / tune;
+                tune *= tune_delta;
+
+                *osc2 += phase_delta;
+                table.get_sample(*osc2, frame, phase_delta) * rev_pan
+            }
         };
 
-        self.oscillators[odd..]
-            .array_chunks()
-            .map(|[voice1, voice2]| {
-                let y1 = voice1.get_sample_from_table(table, frame);
-                let y2 = voice2.get_sample_from_table(table, frame);
-                y1 * pan + y2 * rev_pan
-            })
-            .fold(accumulator, Add::add)
-    }
-
-    #[inline]
-    fn process(&mut self, params: &WTOscParamValues, table: &BandlimitedWaveTables) -> f32x2 {
-        self.update_num_unison_voices(params.num_unison_voices);
-        self.update_phases(params.detune_range * params.detune);
-
-        let sample = self.get_sample_from_table(table, params.frame, params.stereo_pos);
+        let sample = self.oscillators[odd..]
+            .array_chunks_mut()
+            .map(advance_and_get_sample)
+            .fold(accumulator, Add::add);
 
         sample * params.level * params.pan.sqrt()
     }
@@ -226,8 +188,6 @@ impl Processor for WTOsc {
     fn update_smoothers(&mut self) {
         self.param_values.update(&self.params);
     }
-
-    
 }
 
 impl SeenthStandAlonePlugin for WTOscParams {
