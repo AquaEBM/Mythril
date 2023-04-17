@@ -6,4 +6,4 @@ rustflags = "-Ctarget-cpu=native"
 
 lto = "fat"
 codegen-units = 1
-panic = "abort"
+debug = true

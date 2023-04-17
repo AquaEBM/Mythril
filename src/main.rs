@@ -1,6 +1,6 @@
-use nih_plug::prelude::nih_export_standalone;
-use synth::{SeenthPlugin, nodes};
+use nih_plug::prelude::*;
+use synth::*;
 
 fn main() {
-    nih_export_standalone::<SeenthPlugin<nodes::wavetable_oscillator::WTOscParams>>();
+    nih_export_standalone::<WaveTableOscillator>();
 }
