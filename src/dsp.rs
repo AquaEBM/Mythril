@@ -5,12 +5,6 @@ use std::{simd::*, array, arch::x86_64::*, mem::transmute, sync::Arc};
 
 use super::params;
 
-// TODO:
-// 1 - use fixed point for oscillator phases (free wrapping, no divisions)
-// 2 - make wavetable sizes decrease with band-limitation: (2048, 1024, 512 ...)
-// 3 - use Hermite interpolation
-// UNRESOLVED: store derivatives? or calculate them on the fly?
-
 const VECTOR_WIDTH: usize = 16;
 type MaskType = <Mask<i32, VECTOR_WIDTH> as ToBitMask>::BitMask;
 const VOICES_PER_VECTOR: usize = VECTOR_WIDTH / 2;
