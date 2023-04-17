@@ -27,6 +27,15 @@ where
 // available in the standard library, hoping autovectorization compiles this
 // into an simd instruction
 
+fn stereo_unpack(sample: Float) -> (Float, Float) {
+    let sample = __m512::from(sample);
+    
+    unsafe { (
+        _mm512_unpacklo_ps(sample, sample).into(),
+        _mm512_unpacklo_ps(sample, sample).into()
+    ) }
+}
+
 #[inline]
 fn map<T: SimdElement, const N: usize>(
     vector: Simd<T, N>,

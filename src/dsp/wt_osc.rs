@@ -118,7 +118,7 @@ pub fn circular_pan_stereo(pan: Float, sample: Float) -> Float {
 }
 
 pub fn circular_pan_mono(pan: Float, sample: Float) -> [Float ; 2] {
-    let (first_half, second_half) = sample.interleave(sample);
+    let (first_half, second_half) = stereo_unpack(sample);
     [circular_pan_stereo(pan, first_half), circular_pan_stereo(pan, second_half)]
 }
 
