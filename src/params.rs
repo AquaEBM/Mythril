@@ -192,8 +192,6 @@ impl WTOscParams {
 
                     wavetable.update_drop_queue();
 
-                    ui.label(wavetable.drop_queue.len().to_string());
-
                     plain_plot(
                         ui.id().with("Plot"),
                         0.0..points.points().len() as f64,
