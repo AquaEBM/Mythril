@@ -6,4 +6,8 @@ rustflags = "-Ctarget-cpu=native"
 
 lto = "fat"
 codegen-units = 1
+
+[profile.profiling]
+
+inherits = "release"
 debug = true

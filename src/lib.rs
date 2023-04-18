@@ -115,7 +115,7 @@ impl Plugin for WaveTableOscillator {
                         if let Some(osc) = self.oscillators.last_mut().filter(|osc| !osc.is_full()) {
                             osc
                         } else {
-                            self.oscillators.push(Default::default());
+                            let _ = self.oscillators.try_push(Default::default());
                             let osc = self.oscillators.last_mut().unwrap(); // garanteed to succeed
                             osc.update_smoothers(self.params.as_ref());
 
