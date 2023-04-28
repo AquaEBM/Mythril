@@ -3,7 +3,7 @@ use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
 use std::{fs::read_dir, sync::Arc};
 
-use nih_plug_egui::{egui::*, EguiState};
+use nih_plug_egui::egui::*;
 use plot::*;
 
 use plugin_util::{parameter::ParamHandle, gui::widgets::*};
@@ -16,8 +16,6 @@ const WAVETABLE_FOLDER_PATH: &str = r"C:\Users\etulyon1\Documents\Coding\Krynth\
 
 #[derive(Params)]
 pub struct WTOscParams {
-    #[persist = "editor"]
-    pub editor_state: Arc<EguiState>,
     #[id = "level"]
     pub level: FloatParam,
     #[id = "pan"]
@@ -30,6 +28,8 @@ pub struct WTOscParams {
     pub detune_range: FloatParam,
     #[id = "detune"]
     pub detune: FloatParam,
+    #[id = "steuni"]
+    pub stereo_unison: FloatParam,
     #[persist = "wt"]
     pub wt_name: AtomicRefCell<Box<str>>,
     pub wavetable: Mutex<SharedLender<BandLimitedWaveTables>>,
@@ -38,6 +38,7 @@ pub struct WTOscParams {
 impl WTOscParams {
 
     pub fn new(wavetable: SharedLender<BandLimitedWaveTables>) -> Self {
+
         Self {
             level: FloatParam::new(
                 "Level",
@@ -47,8 +48,7 @@ impl WTOscParams {
                     max: 1.,
                     factor: 0.5,
                 },
-            )
-            .with_value_to_string(v2s_f32_rounded(3)),
+            ).with_value_to_string(v2s_f32_rounded(3)),
 
             pan: FloatParam::new(
                 "Pan",
@@ -57,8 +57,7 @@ impl WTOscParams {
                     min: -1.,
                     max: 1.
                 }
-            )
-            .with_value_to_string(v2s_f32_rounded(3)),
+            ).with_value_to_string(v2s_f32_rounded(3)),
 
             num_unison_voices: IntParam::new(
                 "Unison",
@@ -82,8 +81,7 @@ impl WTOscParams {
                     min: 0.,
                     max: 48.
                 }
-            )
-            .with_value_to_string(v2s_f32_rounded(3)),
+            ).with_value_to_string(v2s_f32_rounded(3)),
 
             detune: FloatParam::new(
                 "Detune",
@@ -92,13 +90,20 @@ impl WTOscParams {
                     min: 0.,
                     max: 1.
                 }
-            )
-            .with_value_to_string(v2s_f32_rounded(3)),
+            ).with_value_to_string(v2s_f32_rounded(3)),
+
+            stereo_unison: FloatParam::new(
+                "Unison Stereo Amount",
+                1.,
+                FloatRange::Linear {
+                    min: 0.,
+                    max: 1.
+                }
+            ).with_value_to_string(v2s_f32_rounded(3)),
 
             wt_name: AtomicRefCell::new("Basic Shapes".into()),
 
             wavetable: Mutex::new(wavetable),
-            editor_state: EguiState::from_size(500, 270),
         }
     }
 
@@ -114,30 +119,36 @@ impl WTOscParams {
 
     pub fn ui(&self, ui: &mut Ui, setter: &ParamSetter) -> Response {
 
+        let col = Color32::from_rgb(100, 50, 150);
+
         ui.horizontal(|ui| {
             ui.vertical(|ui| {
                 ui.add(ParamWidget::new(
-                    Knob::new().radius(40.),
+                    Knob::new().radius(40.).color(col),
                     ParamHandle::from((&self.level, setter)),
                 ));
 
                 ui.horizontal(|ui| {
-                    ui.add(ParamWidget::<Knob, ParamHandle<_>>::default(
-                        (&self.num_unison_voices, setter).into(),
+                    ui.add(ParamWidget::new(
+                        Knob::new().color(col),
+                        ParamHandle::from((&self.num_unison_voices, setter)),
                     ));
 
-                    ui.add(ParamWidget::<Knob, ParamHandle<_>>::default(
-                        (&self.pan, setter).into(),
+                    ui.add(ParamWidget::new(
+                        Knob::new().color(col),
+                        ParamHandle::from((&self.pan, setter))
                     ));
                 });
 
                 ui.horizontal(|ui| {
-                    ui.add(ParamWidget::<Knob, ParamHandle<_>>::default(
-                        (&self.detune, setter).into(),
+                    ui.add(ParamWidget::new(
+                        Knob::new().color(col),
+                        ParamHandle::from((&self.detune, setter))
                     ));
 
-                    ui.add(ParamWidget::<Knob, ParamHandle<_>>::default(
-                        (&self.detune_range, setter).into(),
+                    ui.add(ParamWidget::new(
+                        Knob::new().color(col),
+                        ParamHandle::from((&self.detune_range, setter))
                     ));
                 });
             });
@@ -197,7 +208,12 @@ impl WTOscParams {
                         0.0..points.points().len() as f64,
                         -1.0..1.0,
                     )
-                    .show(ui, |plot_ui| plot_ui.line(Line::new(points).fill(0.)));
+                    .show(ui, |plot_ui| plot_ui.line(
+                        Line::new(points)
+                        .color(Color32::from_rgb(80, 40, 120))
+                        .stroke(Stroke::new(1., Color32::from_rgb(0, 255, 255)))
+                        .fill(0.)
+                    ));
                 });
             })
         })

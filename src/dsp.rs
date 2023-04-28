@@ -5,15 +5,16 @@ use std::{simd::*, array, arch::x86_64::*, mem::transmute, sync::Arc};
 
 use super::params;
 
-const VECTOR_WIDTH: usize = 16;
-type MaskType = <Mask<i32, VECTOR_WIDTH> as ToBitMask>::BitMask;
-const VOICES_PER_VECTOR: usize = VECTOR_WIDTH / 2;
+const MAX_VECTOR_WIDTH: usize = 16;
+type MaskType = <Mask<i32, MAX_VECTOR_WIDTH> as ToBitMask>::BitMask;
+const VOICES_PER_VECTOR: usize = MAX_VECTOR_WIDTH / 2;
 
-pub const MAX_POLYPHONY: usize = 16;
+pub const MAX_POLYPHONY: usize = 128;
 pub const NUM_VECTORS: usize = MAX_POLYPHONY / VOICES_PER_VECTOR;
 
-type Int = Simd<u32, VECTOR_WIDTH>;
-type Float = Simd<f32, VECTOR_WIDTH>;
+type Float = Simd<f32, MAX_VECTOR_WIDTH>;
+type UInt = Simd<u32, MAX_VECTOR_WIDTH>;
+type Int = Simd<i32, MAX_VECTOR_WIDTH>;
 
 #[inline]
 pub const fn splat<T: SimdElement, const N: usize>(item: T) -> Simd<T, N>
@@ -23,19 +24,9 @@ where
     Simd::from_array([item ; N])
 }
 
-// convenience functions on simd types when specialized functions aren't
+// convenience function on simd types when specialized functions aren't
 // available in the standard library, hoping autovectorization compiles this
 // into an simd instruction
-
-#[inline]
-fn stereo_unpack(sample: Float) -> (Float, Float) {
-    let sample = __m512::from(sample);
-    
-    unsafe { (
-        _mm512_unpacklo_ps(sample, sample).into(),
-        _mm512_unpackhi_ps(sample, sample).into()
-    ) }
-}
 
 #[inline]
 fn map<T: SimdElement, const N: usize>(
@@ -48,18 +39,6 @@ where
     vector.to_array().map(f).into()
 }
 
-#[inline]
-fn op<T: SimdElement, const N: usize>(
-    a: Simd<T, N>,
-    b: Simd<T, N>,
-    mut f: impl FnMut(T, T) -> T
-) -> Simd<T, N>
-where
-    LaneCount<N>: SupportedLaneCount
-{
-    array::from_fn(|i| f(a[i], b[i])).into()
-}
-
 pub fn as_stereo_samples_ref(vector_ref: &mut Float) -> &mut [f32x2 ; VOICES_PER_VECTOR] {
     // SAFETY:
     //  - VECTOR_WIDTH is a power of two greater than or equal to 2
@@ -70,7 +49,7 @@ pub fn as_stereo_samples_ref(vector_ref: &mut Float) -> &mut [f32x2 ; VOICES_PER
 }
 
 #[inline]
-fn flp_to_fxp(x: Float) -> Int {
+fn to_fixed_point(x: Float) -> UInt {
     const MAX: Float = splat(u32::MAX as f32);
     unsafe { (x * MAX).to_int_unchecked() }
 }
@@ -86,20 +65,22 @@ pub const fn zero_one<const N: usize>() -> [usize ; N] {
 }
 
 #[inline]
-fn alternating<T: SimdElement>(pair: Simd<T, 2>) -> Simd<T, VECTOR_WIDTH> {
+fn alternating<T: SimdElement>(pair: Simd<T, 2>) -> Simd<T, MAX_VECTOR_WIDTH> {
 
-    simd_swizzle!(pair, zero_one::<VECTOR_WIDTH>())
+    const ZERO_ONE: [usize ; MAX_VECTOR_WIDTH] = zero_one();
+
+    simd_swizzle!(pair, ZERO_ONE)
 }
 
 #[inline]
-fn fxp_to_flp(x: Int) -> Float {
+fn fxp_to_flp(x: UInt) -> Float {
     const RATIO: Float = splat(1. / u32::MAX as f32);
     x.cast() * RATIO
 }
 
 #[inline]
 /// we're using intel intrinsics for now because u32 gathers aren't in std::simd yet
-fn gather_select(slice: &[f32], index: Int, bitmask: MaskType) -> Float {
+fn gather_select(slice: &[f32], index: UInt, bitmask: MaskType) -> Float {
     unsafe {
         // _mm_mask_i32gather_ps(
         //     splat(0.).into(),
@@ -127,7 +108,7 @@ fn gather_select(slice: &[f32], index: Int, bitmask: MaskType) -> Float {
     }.into()
 }
 
-pub fn gather(slice: &[f32], index: Int) -> Float {
+pub fn gather(slice: &[f32], index: UInt) -> Float {
     unsafe {
         // _mm_i32gather_ps(slice.as_ptr(), index.cast::<i32>.into(), 4) // 4
         // _mm256_i32gather_ps(slice.as_ptr(), index.cast::<i32>.into(), 4) // 8
@@ -141,17 +122,17 @@ fn lerp(a: Float, b: Float, t: Float) -> Float {
 }
 
 pub fn sum_to_stereo_sample(x: Float) -> f32x2 {
-    let [left1, right1]: [Simd<f32, { VECTOR_WIDTH / 2 }> ; 2] = unsafe { transmute(x) };
+    let [left1, right1]: [Simd<f32, { MAX_VECTOR_WIDTH / 2 }> ; 2] = unsafe { transmute(x) };
 
     let out1 = left1 + right1;
     // out1 // 4
 
-    let [left2, right2]: [Simd<f32, { VECTOR_WIDTH / 4 }> ; 2] = unsafe { transmute(out1) };
+    let [left2, right2]: [Simd<f32, { MAX_VECTOR_WIDTH / 4 }> ; 2] = unsafe { transmute(out1) };
 
     let out2 = left2 + right2;
     // out2 // 8
 
-    let [left3, right3]: [Simd<f32, { VECTOR_WIDTH / 8 }> ; 2] = unsafe { transmute(out2) };
+    let [left3, right3]: [Simd<f32, { MAX_VECTOR_WIDTH / 8 }> ; 2] = unsafe { transmute(out2) };
 
     let out3 = left3 + right3;
 

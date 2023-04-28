@@ -21,13 +21,27 @@ pub struct WaveTableOscillator {
 
 impl Default for WaveTableOscillator {
     fn default() -> Self {
-        let (gui_thr_table, audio_thr_table) = SharedLender::new();
+        let (gui_thr_table_ref, audio_thr_table_ref) = SharedLender::new();
 
         Self {
-            params: Arc::new(WTOscParams::new(gui_thr_table)),
-            table: audio_thr_table,
+            params: Arc::new(WTOscParams::new(gui_thr_table_ref)),
+            table: audio_thr_table_ref,
             oscillators: Default::default()
         }
+    }
+}
+
+impl WaveTableOscillator {
+    pub fn add_voice(&mut self, note: u8, sr: f32) {
+        if let Some(osc) = self.oscillators.last_mut().filter(|osc| !osc.is_full()) {
+            osc
+        } else {
+            let _ = self.oscillators.try_push(Default::default());
+            let osc = self.oscillators.last_mut().unwrap(); // garanteed to succeed
+            osc.update_smoothers(self.params.as_ref());
+
+            osc
+        }.add_voice(note, sr);
     }
 }
 
@@ -112,15 +126,7 @@ impl Plugin for WaveTableOscillator {
 
                     NoteEvent::NoteOn { note, .. } => {
 
-                        if let Some(osc) = self.oscillators.last_mut().filter(|osc| !osc.is_full()) {
-                            osc
-                        } else {
-                            let _ = self.oscillators.try_push(Default::default());
-                            let osc = self.oscillators.last_mut().unwrap(); // garanteed to succeed
-                            osc.update_smoothers(self.params.as_ref());
-
-                            osc
-                        }.add_voice(note, context.transport().sample_rate);
+                        self.add_voice(note, context.transport().sample_rate);
                     },
 
                     NoteEvent::NoteOff { note, .. } => {
@@ -156,21 +162,37 @@ impl Plugin for WaveTableOscillator {
 
         ProcessStatus::Normal
     }
+
+    fn reset(&mut self) {
+        self.oscillators.clear()
+    }
 }
 
-impl ClapPlugin for WaveTableOscillator {
-    const CLAP_ID: &'static str = "com.AquaEBM.WTOSC";
+// impl ClapPlugin for WaveTableOscillator {
+//     const CLAP_ID: &'static str = "com.AquaEBM.WTOSC";
 
-    const CLAP_DESCRIPTION: Option<&'static str> = None;
+//     const CLAP_DESCRIPTION: Option<&'static str> = None;
 
-    const CLAP_MANUAL_URL: Option<&'static str> = None;
+//     const CLAP_MANUAL_URL: Option<&'static str> = None;
 
-    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+//     const CLAP_SUPPORT_URL: Option<&'static str> = None;
 
-    const CLAP_FEATURES: &'static [ClapFeature] = &[
-        ClapFeature::Instrument,
-        ClapFeature::Stereo
+//     const CLAP_FEATURES: &'static [ClapFeature] = &[
+//         ClapFeature::Instrument,
+//         ClapFeature::Stereo
+//     ];
+// }
+
+// nih_export_clap!(WaveTableOscillator);
+
+impl Vst3Plugin for WaveTableOscillator {
+    const VST3_CLASS_ID: [u8; 16] = *b"bananananananana";
+
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = &[
+        Vst3SubCategory::Instrument,
+        Vst3SubCategory::Synth,
+        Vst3SubCategory::Stereo,
     ];
 }
 
-nih_export_clap!(WaveTableOscillator);
+nih_export_vst3!(WaveTableOscillator);

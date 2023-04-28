@@ -30,33 +30,33 @@ impl DerefMut for BandLimitedWaveTables {
     }
 }
 
-const ONE: Int = splat(1);
+const ONE: UInt = splat(1);
 
 impl BandLimitedWaveTables {
 
     /// How many octaves of frequency content our wavetables have, this
     /// is also the base two logarithm of the number of samples in the full version of the table
     const NUM_OCTAVES: usize = 11;
-    const V_NUM_OCTAVES: Int = splat(Self::NUM_OCTAVES as u32);
+    const V_NUM_OCTAVES: UInt = splat(Self::NUM_OCTAVES as u32);
     /// fractional part bits
-    const FRACT_BITS: Int = splat(u32::BITS - Self::NUM_OCTAVES as u32);
+    const FRACT_BITS: UInt = splat(u32::BITS - Self::NUM_OCTAVES as u32);
     /// the number of frames of our wavetables
     pub const NUM_FRAMES: usize = 256;
-    /// base 2 logarithm of the size of one wave frame (mipmaps included)
+    /// total number of samples in the entire wavetable
     const TOTAL_LEN: usize = (1 << Self::NUM_OCTAVES) * (Self::NUM_OCTAVES as usize + 1) * Self::NUM_FRAMES;
 
-    const PHASE_MASK: Int = splat((1 << Self::NUM_OCTAVES as u32) - 1);
+    const PHASE_MASK: UInt = splat((1 << Self::NUM_OCTAVES as u32) - 1);
 
-    const NUM_MIPMAPS: Int = splat(Self::NUM_OCTAVES as u32 + 1);
+    const NUM_MIPMAPS: UInt = splat(Self::NUM_OCTAVES as u32 + 1);
 
     #[inline]
-    pub fn resample_select(&self, phase_delta: Int, frame: Int, phase: Int, mask: MaskType) -> Float {
+    pub fn resample_select(&self, phase_delta: UInt, frame: UInt, phase: UInt, mask: MaskType) -> Float {
 
         let octaves = map(phase_delta, u32::leading_zeros).simd_min(Self::V_NUM_OCTAVES);
 
         let fract = fxp_to_flp(phase << Self::V_NUM_OCTAVES);
 
-        let table_start = (octaves << Self::V_NUM_OCTAVES) + frame * (Self::NUM_MIPMAPS << Self::V_NUM_OCTAVES);
+        let table_start = octaves + frame * Self::NUM_MIPMAPS << Self::V_NUM_OCTAVES;
         
         let phase_a = phase >> Self::FRACT_BITS;
         let phase_b = phase_a + ONE & Self::PHASE_MASK;
@@ -71,7 +71,7 @@ impl BandLimitedWaveTables {
     }
 
     #[inline]
-    pub fn resample(&self, phase_delta: Int, frame: Int, phase: Int) -> Float {
+    pub fn resample(&self, phase_delta: UInt, frame: UInt, phase: UInt) -> Float {
 
         let octaves = map(phase_delta, u32::leading_zeros).simd_min(Self::V_NUM_OCTAVES);
 
@@ -96,7 +96,7 @@ impl BandLimitedWaveTables {
 
         // required in order to avoid a stack overflow in debug builds
         // SAFETY: zero (0.) is a valid f32 value
-        let mut table: Arc<Self> = unsafe { Arc::new_zeroed().assume_init() };
+        let mut table = unsafe { Arc::<Self>::new_zeroed().assume_init() };
 
         let table_mut = Arc::get_mut(&mut table).unwrap();
 
@@ -170,7 +170,7 @@ impl Index<usize> for BandLimitedWaveTables {
 
 pub struct SharedLender<T> {
     ring_buffer: Producer<Arc<T>>,
-    pub drop_queue: Vec<Arc<T>>,
+    drop_queue: Vec<Arc<T>>,
 }
 
 impl<T> SharedLender<T> {
@@ -217,6 +217,7 @@ impl<T> LenderReciever<T> {
         }
     }
 
+    /// get inner data: undefined behaviour when the data is uninitialized
     pub fn data(&self) -> &T {
         unsafe { self.current.as_deref().unwrap_unchecked() }
     }
