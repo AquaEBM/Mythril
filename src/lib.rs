@@ -1,4 +1,4 @@
-#![feature(portable_simd, stdsimd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit)]
+#![feature(portable_simd, stdsimd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit, const_float_bits_conv)]
 
 use std::{sync::Arc, num::NonZeroU32, thread, time::Duration};
 
@@ -46,9 +46,9 @@ impl WaveTableOscillator {
 }
 
 impl Plugin for WaveTableOscillator {
-    const NAME: &'static str = "AquaEBM";
+    const NAME: &'static str = "Wavetable Oscillator";
 
-    const VENDOR: &'static str = "your mom";
+    const VENDOR: &'static str = "AquaEBM";
 
     const URL: &'static str = "rule34.com";
 
@@ -64,7 +64,7 @@ impl Plugin for WaveTableOscillator {
         }
     ];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
+    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
 
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
@@ -80,7 +80,7 @@ impl Plugin for WaveTableOscillator {
         self.params.clone()
     }
 
-    fn editor(&self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
+    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
         let params = self.params.clone();
 
         create_egui_editor(EguiState::from_size(520, 250), (), |_,_| (), move |ctx, setter, _| {

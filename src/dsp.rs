@@ -1,23 +1,32 @@
 pub mod wavetable;
 pub mod wt_osc;
+pub mod utils;
 
 use std::{simd::*, array, arch::x86_64::*, mem::transmute, sync::Arc};
 
 use super::params;
 
 const MAX_VECTOR_WIDTH: usize = 16;
-type MaskType = <Mask<i32, MAX_VECTOR_WIDTH> as ToBitMask>::BitMask;
 const VOICES_PER_VECTOR: usize = MAX_VECTOR_WIDTH / 2;
 
 pub const MAX_POLYPHONY: usize = 128;
-pub const NUM_VECTORS: usize = MAX_POLYPHONY / VOICES_PER_VECTOR;
+pub const NUM_VECTORS: usize = enclosing_div(MAX_POLYPHONY, VOICES_PER_VECTOR);
 
 type Float = Simd<f32, MAX_VECTOR_WIDTH>;
 type UInt = Simd<u32, MAX_VECTOR_WIDTH>;
 type Int = Simd<i32, MAX_VECTOR_WIDTH>;
 
+type MaskType = < <Float as SimdFloat>::Mask as ToBitMask>::BitMask;
+
+const ZERO_F: Float = const_splat(0.);
+const ONE_F: Float = const_splat(1.);
+
+pub const fn enclosing_div(n: usize, d: usize) -> usize {
+    n / d + (n % d != 0) as usize
+}
+
 #[inline]
-pub const fn splat<T: SimdElement, const N: usize>(item: T) -> Simd<T, N>
+pub const fn const_splat<T: SimdElement, const N: usize>(item: T) -> Simd<T, N>
 where
     LaneCount<N>: SupportedLaneCount
 {
@@ -39,80 +48,95 @@ where
     vector.to_array().map(f).into()
 }
 
-pub fn as_stereo_samples_ref(vector_ref: &mut Float) -> &mut [f32x2 ; VOICES_PER_VECTOR] {
-    // SAFETY:
-    //  - VECTOR_WIDTH is a power of two greater than or equal to 2
-    //  - VOICES_PER_VECTOR = VECTOR_WIDTH / 2
-    //  - So Float always has greater than or equal alignment then f32x2
-    // so the f32x2 values are properly aligned
-    unsafe { transmute(vector_ref) }
+// safety argument for the following two functions:
+// both referred to types have the same size 
+// `vector` has greater alignment that the return type
+// the output reference's lifetime is the same as that of the input
+// so no unbounded lifetimes
+// we are transmuting a vector to an array over the same scalar
+// so values are valid
+
+#[inline]
+pub fn as_stereo_sample_array<T: SimdElement>(
+    vector: &Simd<T, MAX_VECTOR_WIDTH>
+) -> &[Simd<T, 2> ; VOICES_PER_VECTOR] {
+
+    unsafe { transmute(vector) }
+}
+
+#[inline]
+pub fn as_mut_stereo_sample_array<T: SimdElement>(
+    vector: &mut Simd<T, MAX_VECTOR_WIDTH>
+) -> &mut [Simd<T, 2> ; VOICES_PER_VECTOR] {
+
+    unsafe { transmute(vector) }
 }
 
 #[inline]
 fn to_fixed_point(x: Float) -> UInt {
-    const MAX: Float = splat(u32::MAX as f32);
+    const MAX: Float = const_splat(u32::MAX as f32);
     unsafe { (x * MAX).to_int_unchecked() }
-}
-
-pub const fn zero_one<const N: usize>() -> [usize ; N] {
-    let mut array = [0 ; N];
-    let mut i = 0;
-    while i < N {
-        array[i] = i & 1;
-        i += 1;
-    }
-    array
 }
 
 #[inline]
 fn alternating<T: SimdElement>(pair: Simd<T, 2>) -> Simd<T, MAX_VECTOR_WIDTH> {
 
-    const ZERO_ONE: [usize ; MAX_VECTOR_WIDTH] = zero_one();
+    const ZERO_ONE: [usize ; MAX_VECTOR_WIDTH] = {
+        let mut array = [0 ; MAX_VECTOR_WIDTH];
+        let mut i = 1;
+        while i < MAX_VECTOR_WIDTH {
+            array[i] = 1;
+            i += 2;
+        }
+        array
+    };
 
     simd_swizzle!(pair, ZERO_ONE)
 }
 
 #[inline]
 fn fxp_to_flp(x: UInt) -> Float {
-    const RATIO: Float = splat(1. / u32::MAX as f32);
+    const RATIO: Float = const_splat(1. / u32::MAX as f32);
     x.cast() * RATIO
 }
 
 #[inline]
 /// we're using intel intrinsics for now because u32 gathers aren't in std::simd yet
 fn gather_select(slice: &[f32], index: UInt, bitmask: MaskType) -> Float {
+
     unsafe {
         // _mm_mask_i32gather_ps(
-        //     splat(0.).into(),
+        //     ZEROF.into(),
         //     slice.as_ptr(),
-        //     index.cast::<i32>.into(),
+        //     index.into(),
         //     std::mem::transmute(Mask::<i32, VECTOR_WIDTH>::from_bitmask(bitmask)),
         //     4
         // ) // 4
 
         // _mm256_mask_i32gather_ps(
-        //     splat(0.).into(),
+        //     ZEROF.into(),
         //     slice.as_ptr(),
-        //     index.cast::<i32>.into(),
+        //     index.into(),
         //     std::mem::transmute(Mask::<i32, VECTOR_WIDTH>::from_bitmask(bitmask)),
         //     4
         // ) // 8
 
         _mm512_mask_i32gather_ps(
-            splat(0.).into(),
+            ZERO_F.into(),
             bitmask,
-            index.cast::<i32>().into(),
+            index.into(),
             slice.as_ptr().cast(),
             4,
         ) // 16
     }.into()
 }
 
+#[inline]
 pub fn gather(slice: &[f32], index: UInt) -> Float {
     unsafe {
         // _mm_i32gather_ps(slice.as_ptr(), index.cast::<i32>.into(), 4) // 4
         // _mm256_i32gather_ps(slice.as_ptr(), index.cast::<i32>.into(), 4) // 8
-        _mm512_i32gather_ps(index.cast::<i32>().into(), slice.as_ptr().cast(), 4) // 16
+        _mm512_i32gather_ps(index.into(), slice.as_ptr().cast(), 4) // 16
     }.into()
 }
 
@@ -121,6 +145,7 @@ fn lerp(a: Float, b: Float, t: Float) -> Float {
     (b - a).mul_add(t, a)
 }
 
+#[inline]
 pub fn sum_to_stereo_sample(x: Float) -> f32x2 {
     let [left1, right1]: [Simd<f32, { MAX_VECTOR_WIDTH / 2 }> ; 2] = unsafe { transmute(x) };
 

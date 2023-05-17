@@ -30,24 +30,24 @@ impl DerefMut for BandLimitedWaveTables {
     }
 }
 
-const ONE: UInt = splat(1);
+const ONE: UInt = const_splat(1);
 
 impl BandLimitedWaveTables {
 
     /// How many octaves of frequency content our wavetables have, this
-    /// is also the base two logarithm of the number of samples in the full version of the table
+    /// is also the base two logarithm of the number of samples in each frame
     const NUM_OCTAVES: usize = 11;
-    const V_NUM_OCTAVES: UInt = splat(Self::NUM_OCTAVES as u32);
+    const V_NUM_OCTAVES: UInt = const_splat(Self::NUM_OCTAVES as u32);
     /// fractional part bits
-    const FRACT_BITS: UInt = splat(u32::BITS - Self::NUM_OCTAVES as u32);
+    const FRACT_BITS: UInt = const_splat(u32::BITS - Self::NUM_OCTAVES as u32);
     /// the number of frames of our wavetables
     pub const NUM_FRAMES: usize = 256;
     /// total number of samples in the entire wavetable
     const TOTAL_LEN: usize = (1 << Self::NUM_OCTAVES) * (Self::NUM_OCTAVES as usize + 1) * Self::NUM_FRAMES;
 
-    const PHASE_MASK: UInt = splat((1 << Self::NUM_OCTAVES as u32) - 1);
+    const PHASE_MASK: UInt = const_splat((1 << Self::NUM_OCTAVES as u32) - 1);
 
-    const NUM_MIPMAPS: UInt = splat(Self::NUM_OCTAVES as u32 + 1);
+    const NUM_MIPMAPS: UInt = const_splat(Self::NUM_OCTAVES as u32 + 1);
 
     #[inline]
     pub fn resample_select(&self, phase_delta: UInt, frame: UInt, phase: UInt, mask: MaskType) -> Float {
@@ -60,9 +60,6 @@ impl BandLimitedWaveTables {
         
         let phase_a = phase >> Self::FRACT_BITS;
         let phase_b = phase_a + ONE & Self::PHASE_MASK;
-
-        // TODO: see if doing this in terms of loads and stores is faster than gathers
-        // (which is probably the case on non-AVX-512 CPUs)
 
         let a = gather_select(self, table_start + phase_a, mask);
         let b = gather_select(self, table_start + phase_b, mask);
@@ -91,6 +88,7 @@ impl BandLimitedWaveTables {
     pub fn from_file(path: impl AsRef<Path>) -> Arc<Self> {
 
         let reader = WavReader::open(path).unwrap();
+
         assert!(reader.len() == (Self::NUM_FRAMES << Self::NUM_OCTAVES) as u32);
         assert!(reader.spec().sample_format == SampleFormat::Float);
 

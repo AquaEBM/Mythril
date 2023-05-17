@@ -1,4 +1,3 @@
-// use crate::wavetable::wavetable_from_file;
 use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
 use std::{fs::read_dir, sync::Arc};
@@ -8,7 +7,7 @@ use plot::*;
 
 use plugin_util::{parameter::ParamHandle, gui::widgets::*};
 
-use nih_plug::{prelude::*, formatters::v2s_f32_rounded};
+use nih_plug::{prelude::*, formatters::*};
 
 use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::MAX_UNISON};
 
@@ -30,6 +29,12 @@ pub struct WTOscParams {
     pub detune: FloatParam,
     #[id = "steuni"]
     pub stereo_unison: FloatParam,
+    #[id = "blend"]
+    pub blend: FloatParam,
+    #[id = "transp"]
+    pub transpose: FloatParam,
+    #[id = "random"]
+    pub random: FloatParam,
     #[persist = "wt"]
     pub wt_name: AtomicRefCell<Box<str>>,
     pub wavetable: Mutex<SharedLender<BandLimitedWaveTables>>,
@@ -99,7 +104,37 @@ impl WTOscParams {
                     min: 0.,
                     max: 1.
                 }
-            ).with_value_to_string(v2s_f32_rounded(3)),
+            ).with_value_to_string(v2s_f32_percentage(3))
+            .with_unit(" %"),
+
+            blend: FloatParam::new(
+                "Blend",
+                1.,
+                FloatRange::Linear {
+                    min: 0.,
+                    max: 1.,
+                }
+            ).with_value_to_string(v2s_f32_percentage(3))
+            .with_unit(" %"),
+
+            transpose: FloatParam::new(
+                "Transpose",
+                0.,
+                FloatRange::Linear {
+                    min: -48.,
+                    max: 48.
+                }
+            ).with_value_to_string(v2s_f32_rounded(2)),
+
+            random: FloatParam::new(
+                "Phase Randomisation",
+                1.,
+                FloatRange::Linear {
+                    min: 0.,
+                    max: 1.
+                }
+            ).with_value_to_string(v2s_f32_percentage(3))
+            .with_unit(" %"),
 
             wt_name: AtomicRefCell::new("Basic Shapes".into()),
 
@@ -197,8 +232,12 @@ impl WTOscParams {
 
                     let mut wavetable = self.wavetable.lock();
 
+                    let id = Id::new(self.frame.as_ptr());
+
+                    let current_norm_val = self.frame.preview_plain(ui.ctx().data().get_temp(id).unwrap_or(0.));
+
                     let points = PlotPoints::from_ys_f32(
-                        &wavetable.current().unwrap()[self.frame.unmodulated_plain_value() as usize],
+                        &wavetable.current().unwrap()[current_norm_val as usize],
                     );
 
                     wavetable.update_drop_queue();
