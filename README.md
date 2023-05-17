@@ -1,2 +1,2 @@
 # Krynth
-bandlimited wavetable synthesizer
+bandlimited wavetable oscillator
