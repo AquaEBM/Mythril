@@ -49,8 +49,7 @@ impl BandLimitedWaveTables {
 
     const NUM_MIPMAPS: UInt = const_splat(Self::NUM_OCTAVES as u32 + 1);
 
-    #[inline]
-    pub fn resample_select(&self, phase_delta: UInt, frame: UInt, phase: UInt, mask: MaskType) -> Float {
+    pub fn resample_select(&self, phase_delta: UInt, frame: UInt, phase: UInt, mask: TMask) -> Float {
 
         let octaves = map(phase_delta, u32::leading_zeros).simd_min(Self::V_NUM_OCTAVES);
 
@@ -61,13 +60,14 @@ impl BandLimitedWaveTables {
         let phase_a = phase >> Self::FRACT_BITS;
         let phase_b = phase_a + ONE & Self::PHASE_MASK;
 
-        let a = gather_select(self, table_start + phase_a, mask);
-        let b = gather_select(self, table_start + phase_b, mask);
+        let (a, b) = unsafe { (
+            gather_select_unchecked(self, table_start + phase_a, mask, ZERO_F),
+            gather_select_unchecked(self, table_start + phase_b, mask, ZERO_F)
+        ) };
 
         lerp(a, b, fract)
     }
 
-    #[inline]
     pub fn resample(&self, phase_delta: UInt, frame: UInt, phase: UInt) -> Float {
 
         let octaves = map(phase_delta, u32::leading_zeros).simd_min(Self::V_NUM_OCTAVES);
@@ -79,8 +79,10 @@ impl BandLimitedWaveTables {
         let phase_a = phase >> Self::FRACT_BITS;
         let phase_b = phase_a + ONE & Self::PHASE_MASK;
 
-        let a = gather(self, table_start + phase_a);
-        let b = gather(self, table_start + phase_b);
+        let (a, b) = unsafe { (
+            gather(self, table_start + phase_a),
+            gather(self, table_start + phase_b)
+        ) };
 
         lerp(a, b, fract)
     }

@@ -14,9 +14,11 @@ path = "src/main.rs"
 
 [dependencies]
 
-nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone", "simd"]}
+nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"]}
 nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 plugin_util = { git = "https://github.com/AquaEBM/plugin_util.git" }
+core_simd = { git = "https://github.com/rust-lang/portable-simd.git" }
+std_float = { git = "https://github.com/rust-lang/portable-simd.git" }
 arrayvec = "0.7.2"
 rand = "0.8.5"
 parking_lot = "0.12.1"

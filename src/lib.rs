@@ -150,14 +150,17 @@ impl Plugin for WaveTableOscillator {
                 next_event = context.next_event();
             }
 
+            let output = sum_to_stereo_sample(self.oscillators
+                .iter_mut()
+                .map(|osc| osc.process(self.table.data()))
+                .sum()
+            );
+
             // SAFETY: the only layout we support is stereo
-            unsafe { frame.from_simd_unchecked(
-                sum_to_stereo_sample(self.oscillators
-                    .iter_mut()
-                    .map(|osc| osc.process(self.table.data()))
-                    .sum()
-                )
-            ) };
+            unsafe { 
+                *frame.get_unchecked_mut(0) = output[0];
+                *frame.get_unchecked_mut(1) = output[1];
+            }
         }
 
         ProcessStatus::Normal
@@ -168,22 +171,20 @@ impl Plugin for WaveTableOscillator {
     }
 }
 
-// impl ClapPlugin for WaveTableOscillator {
-//     const CLAP_ID: &'static str = "com.AquaEBM.WTOSC";
+impl ClapPlugin for WaveTableOscillator {
+    const CLAP_ID: &'static str = "com.AquaEBM.WTOSC";
 
-//     const CLAP_DESCRIPTION: Option<&'static str> = None;
+    const CLAP_DESCRIPTION: Option<&'static str> = None;
 
-//     const CLAP_MANUAL_URL: Option<&'static str> = None;
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
 
-//     const CLAP_SUPPORT_URL: Option<&'static str> = None;
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
 
-//     const CLAP_FEATURES: &'static [ClapFeature] = &[
-//         ClapFeature::Instrument,
-//         ClapFeature::Stereo
-//     ];
-// }
-
-// nih_export_clap!(WaveTableOscillator);
+    const CLAP_FEATURES: &'static [ClapFeature] = &[
+        ClapFeature::Instrument,
+        ClapFeature::Stereo
+    ];
+}
 
 impl Vst3Plugin for WaveTableOscillator {
     const VST3_CLASS_ID: [u8; 16] = *b"bananananananana";
@@ -195,4 +196,5 @@ impl Vst3Plugin for WaveTableOscillator {
     ];
 }
 
+nih_export_clap!(WaveTableOscillator);
 nih_export_vst3!(WaveTableOscillator);

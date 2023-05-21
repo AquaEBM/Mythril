@@ -106,7 +106,7 @@ pub fn log2(a: Float) -> Float {
     let log_exponent: Float = ilog2f(a).cast();
     let x = Float::from_bits(a.to_bits() & MANTISSA_MASK | ZERO_EXPONENT) - ONE_F; 
 
-    let y = x * x.mul_add(x.mul_add(D, C), x);
+    let y = (x * x).mul_add(x.mul_add(D, C), x);
     log_exponent + y
 }
 
@@ -142,8 +142,8 @@ pub fn circular_pan_stereo(pan: Float, sample: Float) -> Float {
 pub struct WTOscParamValues {
     pub level: Float,
     pub pan: Float,
-    pub base_detunes: [&'static [Float] ; VOICES_PER_VECTOR],
-    pub remainder_mask: [MaskType ; VOICES_PER_VECTOR],
+    pub base_detunes: &'static [Float],
+    pub remainder_mask: TMask,
     pub frame: UInt,
     pub detune: Float,
     pub stereo_unison: Float,
@@ -163,17 +163,16 @@ impl WTOscParamValues {
         let voices = params.num_unison_voices.unmodulated_plain_value() as usize;
 
         let mut n = voices + (voices & 1);
-        self.scale = Float::splat(1. / (n as f32).log2());
+        self.scale = (ONE_F / Float::splat(n as f32)).sqrt();
         n -= 1;
 
         let num_full_vectors = n / MAX_VECTOR_WIDTH;
         let remainder = n % MAX_VECTOR_WIDTH + 1;
 
-        let mask = !(usize::MAX << remainder);        
         let detunes = &UNISON_DETUNES[voices as usize][..num_full_vectors];
 
-        self.remainder_mask = [mask as MaskType ; VOICES_PER_VECTOR];
-        self.base_detunes = [detunes ; VOICES_PER_VECTOR];
+        self.remainder_mask = TMask::from_array(array::from_fn(|i| i < remainder));
+        self.base_detunes = detunes;
         self.frame = UInt::splat(params.frame.unmodulated_plain_value() as u32);
 
         self.detune = Float::splat(
@@ -203,7 +202,7 @@ impl Oscillator {
 
         let detune_mult = semitones_to_ratio(detune);
         let float_phase_delta = self.base_phase_delta * detune_mult;
-        let fixed_phase_delta = to_fixed_point(float_phase_delta);
+        let fixed_phase_delta = flp_tp_fxp(float_phase_delta);
 
         self.phase += fixed_phase_delta;
 
@@ -236,7 +235,7 @@ impl WaveTableOscVoice {
                 phases *= randomisation;
 
                 Oscillator {
-                    phase: to_fixed_point(phases),
+                    phase: flp_tp_fxp(phases),
                     base_phase_delta: note_freq
                 }
             }),
@@ -251,7 +250,7 @@ impl WaveTableOscVoice {
         blend: f32x2,
         frame: u32x2,
         base_detunes: &[Float],
-        mask: MaskType,
+        mask: TMask,
     ) -> f32x2 {
 
         let frame = alternating(frame);
@@ -342,8 +341,8 @@ impl WTOscVoiceBlock {
                 transpose[i],
                 blend[i],
                 frame[i],
-                params.base_detunes[i],
-                params.remainder_mask[i],
+                params.base_detunes,
+                params.remainder_mask,
             );
         }
 

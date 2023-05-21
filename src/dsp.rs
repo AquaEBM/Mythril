@@ -2,11 +2,27 @@ pub mod wavetable;
 pub mod wt_osc;
 pub mod utils;
 
-use std::{simd::*, array, arch::x86_64::*, mem::transmute, sync::Arc};
+use std::{array, mem::transmute, sync::Arc};
+#[allow(unused_imports)]
+use std::arch::x86_64::*;
+use core_simd::simd::*;
+use std_float::*;
+use cfg_if::cfg_if;
 
 use super::params;
 
-const MAX_VECTOR_WIDTH: usize = 16;
+const MAX_VECTOR_WIDTH: usize = {
+    if cfg!(any(target_feature = "avx512f")) {
+        16
+    } else if cfg!(any(target_feature = "avx")) {
+        8
+    } else if cfg!(any(target_feature = "sse")) {
+        4
+    } else {
+        2
+    }
+};
+
 const VOICES_PER_VECTOR: usize = MAX_VECTOR_WIDTH / 2;
 
 pub const MAX_POLYPHONY: usize = 128;
@@ -16,16 +32,15 @@ type Float = Simd<f32, MAX_VECTOR_WIDTH>;
 type UInt = Simd<u32, MAX_VECTOR_WIDTH>;
 type Int = Simd<i32, MAX_VECTOR_WIDTH>;
 
-type MaskType = < <Float as SimdFloat>::Mask as ToBitMask>::BitMask;
+type TMask = Mask<i32, MAX_VECTOR_WIDTH>;
 
 const ZERO_F: Float = const_splat(0.);
 const ONE_F: Float = const_splat(1.);
 
 pub const fn enclosing_div(n: usize, d: usize) -> usize {
-    n / d + (n % d != 0) as usize
+    (n + d - 1) / d
 }
 
-#[inline]
 pub const fn const_splat<T: SimdElement, const N: usize>(item: T) -> Simd<T, N>
 where
     LaneCount<N>: SupportedLaneCount
@@ -37,11 +52,10 @@ where
 // available in the standard library, hoping autovectorization compiles this
 // into an simd instruction
 
-#[inline]
-fn map<T: SimdElement, const N: usize>(
+fn map<T: SimdElement, U: SimdElement, const N: usize>(
     vector: Simd<T, N>,
-    f: impl FnMut(T) -> T
-) -> Simd<T, N>
+    f: impl FnMut(T) -> U
+) -> Simd<U, N>
 where
     LaneCount<N>: SupportedLaneCount
 {
@@ -56,7 +70,6 @@ where
 // we are transmuting a vector to an array over the same scalar
 // so values are valid
 
-#[inline]
 pub fn as_stereo_sample_array<T: SimdElement>(
     vector: &Simd<T, MAX_VECTOR_WIDTH>
 ) -> &[Simd<T, 2> ; VOICES_PER_VECTOR] {
@@ -64,7 +77,6 @@ pub fn as_stereo_sample_array<T: SimdElement>(
     unsafe { transmute(vector) }
 }
 
-#[inline]
 pub fn as_mut_stereo_sample_array<T: SimdElement>(
     vector: &mut Simd<T, MAX_VECTOR_WIDTH>
 ) -> &mut [Simd<T, 2> ; VOICES_PER_VECTOR] {
@@ -72,13 +84,11 @@ pub fn as_mut_stereo_sample_array<T: SimdElement>(
     unsafe { transmute(vector) }
 }
 
-#[inline]
-fn to_fixed_point(x: Float) -> UInt {
+fn flp_tp_fxp(x: Float) -> UInt {
     const MAX: Float = const_splat(u32::MAX as f32);
     unsafe { (x * MAX).to_int_unchecked() }
 }
 
-#[inline]
 fn alternating<T: SimdElement>(pair: Simd<T, 2>) -> Simd<T, MAX_VECTOR_WIDTH> {
 
     const ZERO_ONE: [usize ; MAX_VECTOR_WIDTH] = {
@@ -94,72 +104,95 @@ fn alternating<T: SimdElement>(pair: Simd<T, 2>) -> Simd<T, MAX_VECTOR_WIDTH> {
     simd_swizzle!(pair, ZERO_ONE)
 }
 
-#[inline]
 fn fxp_to_flp(x: UInt) -> Float {
     const RATIO: Float = const_splat(1. / u32::MAX as f32);
     x.cast() * RATIO
 }
 
-#[inline]
-/// we're using intel intrinsics for now because u32 gathers aren't in std::simd yet
-fn gather_select(slice: &[f32], index: UInt, bitmask: MaskType) -> Float {
+/// we're using intrinsics for now because u32 gathers aren't in std::simd yet
+unsafe fn gather_select_unchecked(slice: &[f32], index: UInt, mask: TMask, or: Float) -> Float {
 
-    unsafe {
-        // _mm_mask_i32gather_ps(
-        //     ZEROF.into(),
-        //     slice.as_ptr(),
-        //     index.into(),
-        //     std::mem::transmute(Mask::<i32, VECTOR_WIDTH>::from_bitmask(bitmask)),
-        //     4
-        // ) // 4
+    cfg_if! {
 
-        // _mm256_mask_i32gather_ps(
-        //     ZEROF.into(),
-        //     slice.as_ptr(),
-        //     index.into(),
-        //     std::mem::transmute(Mask::<i32, VECTOR_WIDTH>::from_bitmask(bitmask)),
-        //     4
-        // ) // 8
-
-        _mm512_mask_i32gather_ps(
-            ZERO_F.into(),
-            bitmask,
-            index.into(),
-            slice.as_ptr().cast(),
-            4,
-        ) // 16
-    }.into()
+        if #[cfg(target_feature = "avx512f")] {
+        
+            _mm512_mask_i32gather_ps(
+                or.into(),
+                // Mask<T, 16> and __mmask16 (u16) are the same size on AVX-512
+                transmute(mask),
+                index.into(),
+                slice.as_ptr().cast(),
+                4,
+            ).into()
+        
+        } else if #[cfg(target_feature = "avx2")] {
+        
+            _mm256_mask_i32gather_ps(
+                or.into(),
+                slice.as_ptr(),
+                index.into(),
+                mask.into(),
+                4
+            ).into()
+        
+        } else {
+            Simd::gather_select_unchecked(slice, mask.cast(), index.cast(), or)
+        }
+    }
 }
 
-#[inline]
-pub fn gather(slice: &[f32], index: UInt) -> Float {
-    unsafe {
-        // _mm_i32gather_ps(slice.as_ptr(), index.cast::<i32>.into(), 4) // 4
-        // _mm256_i32gather_ps(slice.as_ptr(), index.cast::<i32>.into(), 4) // 8
-        _mm512_i32gather_ps(index.into(), slice.as_ptr().cast(), 4) // 16
-    }.into()
+pub unsafe fn gather(slice: &[f32], index: UInt) -> Float {
+
+    cfg_if! {
+    
+        if #[cfg(target_feature = "avx512f")] {
+
+            _mm512_i32gather_ps(index.into(), slice.as_ptr().cast(), 4).into()
+        
+        } else if #[cfg(target_feature = "avx2")] {
+        
+            _mm256_i32gather_ps(slice.as_ptr(), index.into(), 4).into()
+        
+        } else {
+            Simd::gather_select_unchecked(slice, Mask::splat(true), index.cast(), or)
+        }
+    }
 }
 
-#[inline]
 fn lerp(a: Float, b: Float, t: Float) -> Float {
     (b - a).mul_add(t, a)
 }
 
-#[inline]
 pub fn sum_to_stereo_sample(x: Float) -> f32x2 {
-    let [left1, right1]: [Simd<f32, { MAX_VECTOR_WIDTH / 2 }> ; 2] = unsafe { transmute(x) };
 
-    let out1 = left1 + right1;
-    // out1 // 4
+    unsafe { cfg_if! {
 
-    let [left2, right2]: [Simd<f32, { MAX_VECTOR_WIDTH / 4 }> ; 2] = unsafe { transmute(out1) };
+        if #[cfg(any(target_feature = "avx512f"))] {
 
-    let out2 = left2 + right2;
-    // out2 // 8
+            // MAX_VECTOR_WIDTH = 16
+            let [left1, right1]: [Simd<f32, { MAX_VECTOR_WIDTH / 2 }> ; 2] = transmute(x);
+            let [left2, right2]: [Simd<f32, { MAX_VECTOR_WIDTH / 4 }> ; 2] = transmute(left1 + right1);
+            let [left3, right3]: [Simd<f32, { MAX_VECTOR_WIDTH / 8 }> ; 2] = transmute(left2 + right2);
 
-    let [left3, right3]: [Simd<f32, { MAX_VECTOR_WIDTH / 8 }> ; 2] = unsafe { transmute(out2) };
+            left3 + right3
 
-    let out3 = left3 + right3;
+        } else if #[cfg(any(target_feature = "avx"))] {
 
-    out3 // 16
+            // MAX_VECTOR_WIDTH = 8
+            let [left1, right1]: [Simd<f32, { MAX_VECTOR_WIDTH / 2 }> ; 2] = transmute(x);
+            let [left2, right2]: [Simd<f32, { MAX_VECTOR_WIDTH / 4 }> ; 2] = transmute(left1 + right1);
+            left2 + right2
+            
+        } else if #[cfg(any(target_feature = "sse"))] {
+
+            // MAX_VECTOR_WIDTH = 4
+            let [left, right]: [Simd<f32, { MAX_VECTOR_WIDTH / 2 }> ; 2] = transmute(x);
+            left + right
+
+        } else {
+
+            // MAX_VECTOR_WIDTH = 2
+            x
+        }
+    } }
 }
