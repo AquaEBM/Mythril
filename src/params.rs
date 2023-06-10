@@ -1,11 +1,6 @@
 use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
-use std::{fs::read_dir, sync::Arc};
-
-use nih_plug_egui::egui::*;
-use plot::*;
-
-use plugin_util::{parameter::ParamHandle, gui::widgets::*};
+use std::{fs::read_dir};
 
 use nih_plug::{prelude::*, formatters::*};
 
@@ -109,9 +104,9 @@ impl WTOscParams {
 
             blend: FloatParam::new(
                 "Blend",
-                1.,
+                0.,
                 FloatRange::Linear {
-                    min: 0.,
+                    min: -1.,
                     max: 1.,
                 }
             ).with_value_to_string(v2s_f32_percentage(3))
@@ -150,112 +145,5 @@ impl WTOscParams {
         );
 
         self.wavetable.lock().add(wt);
-    }
-
-    pub fn ui(&self, ui: &mut Ui, setter: &ParamSetter) -> Response {
-
-        let col = Color32::from_rgb(100, 50, 150);
-
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.add(ParamWidget::new(
-                    Knob::new().radius(40.).color(col),
-                    ParamHandle::from((&self.level, setter)),
-                ));
-
-                ui.horizontal(|ui| {
-                    ui.add(ParamWidget::new(
-                        Knob::new().color(col),
-                        ParamHandle::from((&self.num_unison_voices, setter)),
-                    ));
-
-                    ui.add(ParamWidget::new(
-                        Knob::new().color(col),
-                        ParamHandle::from((&self.pan, setter))
-                    ));
-                });
-
-                ui.horizontal(|ui| {
-                    ui.add(ParamWidget::new(
-                        Knob::new().color(col),
-                        ParamHandle::from((&self.detune, setter))
-                    ));
-
-                    ui.add(ParamWidget::new(
-                        Knob::new().color(col),
-                        ParamHandle::from((&self.detune_range, setter))
-                    ));
-                });
-            });
-
-            ui.vertical_centered_justified(|ui| {
-
-                let wavetable_list = ui.memory().data.get_temp(
-                    ui.id().with("wt_list"),
-                ).or_else(|| {
-                    Some(read_dir(WAVETABLE_FOLDER_PATH).unwrap().map(|name| name
-                        .unwrap()
-                        .file_name()
-                        .to_str()
-                        .unwrap()
-                        .strip_suffix(".WAV")
-                        .unwrap()
-                        .into()
-                    ).collect::<Arc<[Box<str>]>>())
-                }).unwrap();
-
-                let current_wt_name = self.wt_name.borrow().clone();
-
-                ComboBox::from_id_source(ui.id().with("combobox"))
-                    .width(ui.available_width())
-                    .selected_text(current_wt_name.as_ref())
-                    .show_ui(ui, |ui| {
-                        for name in wavetable_list.iter() {
-
-                            let name_ref = name.as_ref();
-
-                            if ui
-                                .selectable_label(name_ref == current_wt_name.as_ref(), name_ref)
-                                .clicked()
-                            {
-                                *self.wt_name.borrow_mut() = name.clone();
-                                self.load_wavetable();
-                            }
-                        }
-                    });
-
-                ui.horizontal_centered(|ui| {
-
-                    ui.add(ParamWidget::<VSlider, ParamHandle<_>>::default(
-                        (&self.frame, setter).into(),
-                    ));
-
-                    let mut wavetable = self.wavetable.lock();
-
-                    let id = Id::new(self.frame.as_ptr());
-
-                    let current_norm_val = self.frame.preview_plain(ui.ctx().data().get_temp(id).unwrap_or(0.));
-
-                    let points = PlotPoints::from_ys_f32(
-                        &wavetable.current().unwrap()[current_norm_val as usize],
-                    );
-
-                    wavetable.update_drop_queue();
-
-                    plain_plot(
-                        ui.id().with("Plot"),
-                        0.0..points.points().len() as f64,
-                        -1.0..1.0,
-                    )
-                    .show(ui, |plot_ui| plot_ui.line(
-                        Line::new(points)
-                        .color(Color32::from_rgb(80, 40, 120))
-                        .stroke(Stroke::new(1., Color32::from_rgb(0, 255, 255)))
-                        .fill(0.)
-                    ));
-                });
-            })
-        })
-        .response
     }
 }

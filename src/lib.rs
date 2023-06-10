@@ -1,11 +1,10 @@
 #![feature(portable_simd, stdsimd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit, const_float_bits_conv)]
 
-use std::{sync::Arc, num::NonZeroU32, thread, time::Duration};
+use std::{sync::Arc, num::NonZeroU32};
 
 use arrayvec::ArrayVec;
-use dsp::{NUM_VECTORS, wt_osc::WTOscVoiceBlock, sum_to_stereo_sample};
+use dsp::{NUM_VECTORS, wt_osc::WTOscVoice, sum_to_stereo_sample};
 use nih_plug::prelude::*;
-use nih_plug_egui::{create_egui_editor, EguiState, egui::CentralPanel};
 use params::WTOscParams;
 
 mod dsp;
@@ -16,7 +15,7 @@ use dsp::wavetable::*;
 pub struct WaveTableOscillator {
     params: Arc<WTOscParams>,
     table: LenderReciever<BandLimitedWaveTables>,
-    oscillators: ArrayVec<WTOscVoiceBlock, NUM_VECTORS>,
+    oscillators: ArrayVec<WTOscVoice, NUM_VECTORS>,
 }
 
 impl Default for WaveTableOscillator {
@@ -68,9 +67,7 @@ impl Plugin for WaveTableOscillator {
 
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
-    const SAMPLE_ACCURATE_AUTOMATION: bool = false;
-
-    const HARD_REALTIME_ONLY: bool = false;
+    const SAMPLE_ACCURATE_AUTOMATION: bool = true;
 
     type SysExMessage = ();
 
@@ -78,18 +75,6 @@ impl Plugin for WaveTableOscillator {
 
     fn params(&self) -> Arc<dyn Params> {
         self.params.clone()
-    }
-
-    fn editor(&mut self, _async_executor: AsyncExecutor<Self>) -> Option<Box<dyn Editor>> {
-        let params = self.params.clone();
-
-        create_egui_editor(EguiState::from_size(520, 250), (), |_,_| (), move |ctx, setter, _| {
-            CentralPanel::default().show(ctx, |ui| {
-                params.ui(ui, setter);
-            });
-
-            thread::sleep(Duration::from_secs_f64(1. / 64.));
-        })
     }
 
     fn initialize(

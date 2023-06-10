@@ -2,6 +2,7 @@ use hound::{SampleFormat, WavReader};
 use realfft::{RealFftPlanner, num_complex::Complex32};
 use rtrb::{Producer, Consumer, RingBuffer};
 use std::{path::Path, ops::{Deref, DerefMut, Index}};
+use plugin_util::math::lerp;
 
 use super::*;
 
@@ -34,7 +35,7 @@ const ONE: UInt = const_splat(1);
 
 impl BandLimitedWaveTables {
 
-    /// How many octaves of frequency content our wavetables have, this
+    /// How many octaves of frequency content our wavetables has, this
     /// is also the base two logarithm of the number of samples in each frame
     const NUM_OCTAVES: usize = 11;
     const V_NUM_OCTAVES: UInt = const_splat(Self::NUM_OCTAVES as u32);

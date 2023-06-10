@@ -1,10 +1,9 @@
-use std::f32::consts::LN_2;
-
 use super::{*, wavetable::BandLimitedWaveTables};
 use arrayvec::ArrayVec;
 use nih_plug::{prelude::Param, util};
 use params::WTOscParams;
 use rand::random;
+use plugin_util::math::*;
 
 // TODO: implement unison center/detuned voice blending
 
@@ -58,58 +57,6 @@ const UNISON_DETUNES: [[Float ; NUM_UNISON_VECTORS] ; MAX_UNISON + 1] = {
     unsafe { transmute(blocks) }
 };
 
-const MANTISSA_BITS: Int = const_splat(f32::MANTISSA_DIGITS as i32 - 1);
-const MAX_FINITE_EXP: Int = const_splat(f32::MAX_EXP - 1);
-
-/// compute `2^i` as a Float
-/// results in undefined behavior if i is not in [-126 ; 126]
-pub fn fexp2i(i: Int) -> Float {
-    Float::from_bits((i + MAX_FINITE_EXP << MANTISSA_BITS).cast())
-}
-
-/// "cheap" 2 ^ x approximation, results in undefined behavior in case of
-/// NAN, inf or subnormal numbers, taylor series already works pretty well here since
-/// all we need is a polynomial approximation in [-0.5, 0.5]
-pub fn exp2(a: Float) -> Float {
-
-    const A: Float = const_splat(1.);
-    const B: Float = const_splat(LN_2);
-    const C: Float = const_splat(LN_2 * LN_2 / 2.);
-    const D: Float = const_splat(LN_2 * LN_2 * LN_2 / 6.);
-
-    let rounded = a.round();
-
-    let int = fexp2i(unsafe { rounded.to_int_unchecked() }); // very cheap
-
-    let x = a - rounded; // is always in [-0.5 ; 0.5]
-
-    let y = x.mul_add(x.mul_add(x.mul_add(D, C), B), A);
-    int * y
-}
-
-/// Compute floor(log2(x)) as an Int results in undefined behavior
-/// when x is NAN, inf or subnormal
-pub fn ilog2f(x: Float) -> Int {
-    (x.to_bits().cast() >> MANTISSA_BITS) - MAX_FINITE_EXP
-}
-
-/// "cheap" log2 approximation, results in undefined behavior in case of
-/// NAN, inf or subnormal numbers. taylor series is terrible here so
-/// TODO: find a minimax polynomial and use that
-pub fn log2(a: Float) -> Float {
-    const C: Float = const_splat(-1. / 2. / LN_2);
-    const D: Float = const_splat(1. / 3. / LN_2);
-
-    const MANTISSA_MASK: UInt = const_splat(1 << (f32::MANTISSA_DIGITS - 1) - 1);
-    const ZERO_EXPONENT: UInt = const_splat(1f32.to_bits());
-
-    let log_exponent: Float = ilog2f(a).cast();
-    let x = Float::from_bits(a.to_bits() & MANTISSA_MASK | ZERO_EXPONENT) - ONE_F; 
-
-    let y = (x * x).mul_add(x.mul_add(D, C), x);
-    log_exponent + y
-}
-
 pub fn semitones_to_ratio(semitones: Float) -> Float {
     const RATIO: Float = const_splat(1. / 12.);
     exp2(semitones * RATIO)
@@ -131,11 +78,6 @@ pub fn circular_pan_weights(pan: Float) -> Float {
     };
 
     pan.mul_add(B, A).sqrt()
-}
-
-pub fn circular_pan_stereo(pan: Float, sample: Float) -> Float {
-    let weights = circular_pan_weights(pan);
-    sample * weights
 }
 
 #[derive(Default)]
@@ -288,13 +230,13 @@ impl WaveTableOscVoice {
 }
 
 #[derive(Default)]
-pub struct WTOscVoiceBlock {
+pub struct WTOscVoice {
 
     param_values: WTOscParamValues,
     voices: ArrayVec<WaveTableOscVoice, VOICES_PER_VECTOR>,
 }
 
-pub fn set_stereo_amount(x: Float, stereo_amount: Float) -> Float {
+pub fn with_stereo_amount(x: Float, stereo_amount: Float) -> Float {
 
     const FLIP_PAIRS: [usize ; MAX_VECTOR_WIDTH] = {
 
@@ -314,14 +256,16 @@ pub fn set_stereo_amount(x: Float, stereo_amount: Float) -> Float {
     let mono = (ONE_F - stereo_amount).sqrt();
     let stereo = (ONE_F + stereo_amount).sqrt();
 
-    x * stereo + flipped * mono
+    x.mul_add(stereo, flipped * mono)
 }
 
-impl WTOscVoiceBlock {
+impl WTOscVoice {
 
     pub fn process(&mut self, table: &BandLimitedWaveTables) -> Float {
 
         let mut output = const_splat(0.);
+
+        let output_samples_ref = as_mut_stereo_sample_array(&mut output);
 
         let params = &self.param_values;
 
@@ -330,12 +274,13 @@ impl WTOscVoiceBlock {
         let transpose = as_stereo_sample_array(&params.transpose);
         let blend = as_stereo_sample_array(&params.blend);
 
-        for (i, (voice, sample)) in self.voices
-            .iter_mut()
-            .zip(as_mut_stereo_sample_array(&mut output).iter_mut())
-            .enumerate()
-        {
-            *sample += voice.update_phases_and_resample(
+        // VERY UNSAFE
+        if self.voices.len() > VOICES_PER_VECTOR {
+            unsafe { std::hint::unreachable_unchecked() }
+        }
+
+        for (i, voice) in self.voices.iter_mut().enumerate() {
+            output_samples_ref[i] += voice.update_phases_and_resample(
                 table,
                 detune[i],
                 transpose[i],
@@ -346,9 +291,11 @@ impl WTOscVoiceBlock {
             );
         }
 
-        output = set_stereo_amount(output, params.stereo_unison);
+        output = with_stereo_amount(output, params.stereo_unison);
 
-        circular_pan_stereo(params.pan, output * params.level * params.scale)
+        let panning_weights = circular_pan_weights(params.pan);
+
+        (output * params.level) * (params.scale * panning_weights)
     }
 
     pub fn is_full(&self) -> bool {
@@ -365,7 +312,7 @@ impl WTOscVoiceBlock {
             return
         };
 
-        let _ = self.voices.try_push(
+        self.voices.push(
             WaveTableOscVoice::new(
                 note_id,
                 random,

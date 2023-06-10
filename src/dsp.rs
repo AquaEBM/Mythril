@@ -14,7 +14,7 @@ use super::params;
 const MAX_VECTOR_WIDTH: usize = {
     if cfg!(any(target_feature = "avx512f")) {
         16
-    } else if cfg!(any(target_feature = "avx")) {
+    } else if cfg!(any(target_feature = "avx", target_feature = "neon")) {
         8
     } else if cfg!(any(target_feature = "sse")) {
         4
@@ -30,7 +30,6 @@ pub const NUM_VECTORS: usize = enclosing_div(MAX_POLYPHONY, VOICES_PER_VECTOR);
 
 type Float = Simd<f32, MAX_VECTOR_WIDTH>;
 type UInt = Simd<u32, MAX_VECTOR_WIDTH>;
-type Int = Simd<i32, MAX_VECTOR_WIDTH>;
 
 type TMask = Mask<i32, MAX_VECTOR_WIDTH>;
 
@@ -154,14 +153,11 @@ pub unsafe fn gather(slice: &[f32], index: UInt) -> Float {
             _mm256_i32gather_ps(slice.as_ptr(), index.into(), 4).into()
         
         } else {
-            Simd::gather_select_unchecked(slice, Mask::splat(true), index.cast(), or)
+            Simd::gather_select_unchecked(slice, Mask::splat(true), index.cast(), const_splat(0.))
         }
     }
 }
 
-fn lerp(a: Float, b: Float, t: Float) -> Float {
-    (b - a).mul_add(t, a)
-}
 
 pub fn sum_to_stereo_sample(x: Float) -> f32x2 {
 
