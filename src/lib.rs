@@ -37,7 +37,7 @@ impl WaveTableOscillator {
         } else {
             let _ = self.oscillators.try_push(Default::default());
             let osc = self.oscillators.last_mut().unwrap(); // garanteed to succeed
-            osc.update_smoothers(self.params.as_ref());
+            osc.update_smoothers(self.params.as_ref(), 128);
 
             osc
         }.add_voice(note, sr);
@@ -49,7 +49,7 @@ impl Plugin for WaveTableOscillator {
 
     const VENDOR: &'static str = "AquaEBM";
 
-    const URL: &'static str = "rule34.com";
+    const URL: &'static str = "banananaaaa.com";
 
     const EMAIL: &'static str = "monke@gmail.com";
 
@@ -97,7 +97,9 @@ impl Plugin for WaveTableOscillator {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
 
-        self.oscillators.iter_mut().for_each(|osc| osc.update_smoothers(self.params.as_ref()));
+        let block_len = buffer.samples().max(128);
+
+        self.oscillators.iter_mut().for_each(|osc| osc.update_smoothers(self.params.as_ref(), block_len));
         self.table.update_item();
 
         let mut next_event = context.next_event();

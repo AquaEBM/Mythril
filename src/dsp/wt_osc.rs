@@ -4,6 +4,7 @@ use nih_plug::{prelude::Param, util};
 use params::WTOscParams;
 use rand::random;
 use plugin_util::math::*;
+use plugin_util::smoothing::*;
 
 // TODO: implement unison center/detuned voice blending
 
@@ -82,25 +83,28 @@ pub fn circular_pan_weights(pan: Float) -> Float {
 
 #[derive(Default)]
 pub struct WTOscParamValues {
-    pub level: Float,
-    pub pan: Float,
+    pub level: LinearSmoother<MAX_VECTOR_WIDTH>,
+    pub pan: LinearSmoother<MAX_VECTOR_WIDTH>,
     pub base_detunes: &'static [Float],
     pub remainder_mask: TMask,
     pub frame: UInt,
-    pub detune: Float,
-    pub stereo_unison: Float,
-    pub blend: Float,
+    pub detune: LinearSmoother<MAX_VECTOR_WIDTH>,
+    pub stereo_unison: LinearSmoother<MAX_VECTOR_WIDTH>,
+    pub blend: LinearSmoother<MAX_VECTOR_WIDTH>,
     pub scale: Float,
-    pub transpose: Float,
+    pub transpose: LinearSmoother<MAX_VECTOR_WIDTH>,
     pub random: Float,
 }
 
 impl WTOscParamValues {
-    pub fn update(&mut self, params: &WTOscParams) {
+    pub fn update_targets(&mut self, params: &WTOscParams, block_len: usize) {
 
-        self.level = Float::splat(params.level.unmodulated_plain_value());
-        self.stereo_unison = Float::splat(params.stereo_unison.unmodulated_normalized_value());
-        self.pan = Float::splat(params.pan.unmodulated_plain_value());
+        self.level.set_target(Float::splat(params.level.unmodulated_plain_value()), block_len);
+        self.stereo_unison.set_target(
+            Float::splat(params.stereo_unison.unmodulated_plain_value()),
+            block_len
+        );
+        self.pan.set_target(Float::splat(params.pan.unmodulated_plain_value()), block_len);
 
         let voices = params.num_unison_voices.unmodulated_plain_value() as usize;
 
@@ -111,24 +115,40 @@ impl WTOscParamValues {
         let num_full_vectors = n / MAX_VECTOR_WIDTH;
         let remainder = n % MAX_VECTOR_WIDTH + 1;
 
-        let detunes = &UNISON_DETUNES[voices as usize][..num_full_vectors];
-
         self.remainder_mask = TMask::from_array(array::from_fn(|i| i < remainder));
-        self.base_detunes = detunes;
+        self.base_detunes =  &UNISON_DETUNES[voices as usize][..num_full_vectors];
         self.frame = UInt::splat(params.frame.unmodulated_plain_value() as u32);
 
-        self.detune = Float::splat(
-            params.detune.unmodulated_plain_value() *
-            params.detune_range.unmodulated_plain_value()
+        self.detune.set_target(
+            Float::splat(
+                params.detune.unmodulated_plain_value() *
+                params.detune_range.unmodulated_plain_value()
+            ),
+            block_len
         );
 
-        self.stereo_unison = Float::splat(params.stereo_unison.unmodulated_plain_value());
+        self.stereo_unison.set_target(
+            Float::splat(params.stereo_unison.unmodulated_plain_value()),
+            block_len
+        );
 
-        self.transpose = Float::splat(params.transpose.unmodulated_plain_value());
+        self.transpose.set_target(
+            Float::splat(params.transpose.unmodulated_plain_value()),
+            block_len,
+        );
 
         self.random = Float::splat(params.random.unmodulated_plain_value());
 
-        self.blend = Float::splat(params.blend.unmodulated_plain_value());
+        self.blend.set_target(Float::splat(params.blend.unmodulated_plain_value()), block_len);
+    }
+
+    pub fn tick(&mut self) {
+        self.level.tick();
+        self.pan.tick();
+        self.detune.tick();
+        self.stereo_unison.tick();
+        self.blend.tick();
+        self.transpose.tick();
     }
 }
 
@@ -250,7 +270,7 @@ pub fn with_stereo_amount(x: Float, stereo_amount: Float) -> Float {
         }
         array
     };
-
+ 
     let flipped = simd_swizzle!(x, FLIP_PAIRS);
 
     let mono = (ONE_F - stereo_amount).sqrt();
@@ -263,21 +283,18 @@ impl WTOscVoice {
 
     pub fn process(&mut self, table: &BandLimitedWaveTables) -> Float {
 
+        self.param_values.tick();
+
         let mut output = const_splat(0.);
 
         let output_samples_ref = as_mut_stereo_sample_array(&mut output);
 
         let params = &self.param_values;
 
-        let detune = as_stereo_sample_array(&params.detune);
+        let detune = as_stereo_sample_array(params.detune.current());
         let frame = as_stereo_sample_array(&params.frame);
-        let transpose = as_stereo_sample_array(&params.transpose);
-        let blend = as_stereo_sample_array(&params.blend);
-
-        // VERY UNSAFE
-        if self.voices.len() > VOICES_PER_VECTOR {
-            unsafe { std::hint::unreachable_unchecked() }
-        }
+        let transpose = as_stereo_sample_array(params.transpose.current());
+        let blend = as_stereo_sample_array(params.blend.current());
 
         for (i, voice) in self.voices.iter_mut().enumerate() {
             output_samples_ref[i] += voice.update_phases_and_resample(
@@ -291,11 +308,11 @@ impl WTOscVoice {
             );
         }
 
-        output = with_stereo_amount(output, params.stereo_unison);
+        output = with_stereo_amount(output, *params.stereo_unison.current());
 
-        let panning_weights = circular_pan_weights(params.pan);
+        let panning_weights = circular_pan_weights(*params.pan.current());
 
-        (output * params.level) * (params.scale * panning_weights)
+        (output * (*params.level.current())) * (params.scale * panning_weights)
     }
 
     pub fn is_full(&self) -> bool {
@@ -332,7 +349,7 @@ impl WTOscVoice {
         false
     }
 
-    pub fn update_smoothers(&mut self, params: &WTOscParams) {
-        self.param_values.update(params);
+    pub fn update_smoothers(&mut self, params: &WTOscParams, block_len: usize) {
+        self.param_values.update_targets(params, block_len);
     }    
 }
