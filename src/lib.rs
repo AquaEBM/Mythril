@@ -3,7 +3,8 @@
 use std::{sync::Arc, num::NonZeroU32};
 
 use arrayvec::ArrayVec;
-use dsp::{NUM_VECTORS, wt_osc::WTOscVoice, sum_to_stereo_sample};
+use dsp::{NUM_VECTORS, wt_osc::WTOscVoice};
+use plugin_util::simd_util::sum_to_stereo_sample;
 use nih_plug::prelude::*;
 use params::WTOscParams;
 

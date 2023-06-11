@@ -1,10 +1,10 @@
 use super::{*, wavetable::BandLimitedWaveTables};
+use std::{array, mem::transmute};
 use arrayvec::ArrayVec;
 use nih_plug::{prelude::Param, util};
 use params::WTOscParams;
 use rand::random;
-use plugin_util::math::*;
-use plugin_util::smoothing::*;
+use smoothing::*;
 
 // TODO: implement unison center/detuned voice blending
 
@@ -164,7 +164,7 @@ impl Oscillator {
 
         let detune_mult = semitones_to_ratio(detune);
         let float_phase_delta = self.base_phase_delta * detune_mult;
-        let fixed_phase_delta = flp_tp_fxp(float_phase_delta);
+        let fixed_phase_delta = flp_to_fxp(float_phase_delta);
 
         self.phase += fixed_phase_delta;
 
@@ -182,7 +182,7 @@ impl WaveTableOscVoice {
     pub fn new(note_id: u8, phase_randomisation: f32x2, sample_rate: f32) -> Self {
 
         let note_freq = Float::splat(util::midi_note_to_freq(note_id) / sample_rate);
-        let randomisation = alternating(phase_randomisation);
+        let randomisation = splat_stereo(phase_randomisation);
 
         Self {
             note_id,
@@ -197,7 +197,7 @@ impl WaveTableOscVoice {
                 phases *= randomisation;
 
                 Oscillator {
-                    phase: flp_tp_fxp(phases),
+                    phase: flp_to_fxp(phases),
                     base_phase_delta: note_freq
                 }
             }),
@@ -215,10 +215,10 @@ impl WaveTableOscVoice {
         mask: TMask,
     ) -> f32x2 {
 
-        let frame = alternating(frame);
-        let global_detune = alternating(detune);
-        let transpose = alternating(transpose);
-        let blend = alternating(blend);
+        let frame = splat_stereo(frame);
+        let global_detune = splat_stereo(detune);
+        let transpose = splat_stereo(transpose);
+        let blend = splat_stereo(blend);
 
         let (center_osc, center_osc_detune) = unsafe { (
             self.oscillators.get_unchecked_mut(0),

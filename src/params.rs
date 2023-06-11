@@ -1,6 +1,5 @@
 use atomic_refcell::AtomicRefCell;
 use parking_lot::Mutex;
-use std::{fs::read_dir};
 
 use nih_plug::{prelude::*, formatters::*};
 
