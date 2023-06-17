@@ -96,7 +96,7 @@ impl WTOscParams {
                 1.,
                 FloatRange::Linear {
                     min: 0.,
-                    max: 1.
+                    max: 1. - f32::EPSILON,
                 }
             ).with_value_to_string(v2s_f32_percentage(3))
             .with_unit(" %"),

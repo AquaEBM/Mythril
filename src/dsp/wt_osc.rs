@@ -104,6 +104,7 @@ impl WTOscParamValues {
             Float::splat(params.stereo_unison.unmodulated_plain_value()),
             block_len
         );
+
         self.pan.set_target(Float::splat(params.pan.unmodulated_plain_value()), block_len);
 
         let voices = params.num_unison_voices.unmodulated_plain_value() as usize;

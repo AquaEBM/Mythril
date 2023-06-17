@@ -112,11 +112,6 @@ impl Plugin for WaveTableOscillator {
 
                 match event {
 
-                    NoteEvent::NoteOn { note, .. } => {
-
-                        self.add_voice(note, context.transport().sample_rate);
-                    },
-
                     NoteEvent::NoteOff { note, .. } => {
 
                         let mut empty_osc = None;
@@ -132,6 +127,12 @@ impl Plugin for WaveTableOscillator {
 
                         empty_osc.map(|empty_osc_index| self.oscillators.swap_remove(empty_osc_index));
                     },
+
+                    NoteEvent::NoteOn { note, .. } => {
+
+                        self.add_voice(note, context.transport().sample_rate);
+                    },
+
                     _ => (),
                 }
 
