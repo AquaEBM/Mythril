@@ -95,7 +95,7 @@ impl BandLimitedWaveTables {
         assert!(reader.spec().sample_format == SampleFormat::Float);
 
         // required in order to avoid a stack overflow in debug builds
-        // SAFETY: zero (0.) is a valid f32 value
+        // SAFETY: zero (0.0) is a valid f32 value
         let mut table = unsafe { Arc::<Self>::new_zeroed().assume_init() };
 
         let table_mut = Arc::get_mut(&mut table).unwrap();
