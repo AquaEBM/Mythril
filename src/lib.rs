@@ -11,34 +11,26 @@ use params::WTOscParams;
 mod dsp;
 mod params;
 
-use dsp::wavetable::*;
-
+#[derive(Default)]
 pub struct WaveTableOscillator {
     params: Arc<WTOscParams>,
-    table: LenderReciever<BandLimitedWaveTables>,
     oscillators: ArrayVec<WTOscVoice, NUM_VECTORS>,
-}
-
-impl Default for WaveTableOscillator {
-    fn default() -> Self {
-        let (gui_thr_table_ref, audio_thr_table_ref) = SharedLender::new();
-
-        Self {
-            params: Arc::new(WTOscParams::new(gui_thr_table_ref)),
-            table: audio_thr_table_ref,
-            oscillators: Default::default()
-        }
-    }
 }
 
 impl WaveTableOscillator {
     pub fn add_voice(&mut self, note: u8, sr: f32) {
+
         if let Some(osc) = self.oscillators.last_mut().filter(|osc| !osc.is_full()) {
+
             osc
         } else {
-            let _ = self.oscillators.try_push(Default::default());
+
+            // TODO: this is problematic, it waits for a lock
+            let _ = self.oscillators.try_push(self.params.create_processor());
+
             let osc = self.oscillators.last_mut().unwrap(); // garanteed to succeed
-            osc.update_smoothers(self.params.as_ref(), 128);
+
+            osc.update_smoothers(self.params.as_ref(), 32);
 
             osc
         }.add_voice(note, sr);
@@ -86,8 +78,6 @@ impl Plugin for WaveTableOscillator {
     ) -> bool {
 
         self.params.load_wavetable();
-        self.table.update_item();
-
         true
     }
 
@@ -98,10 +88,9 @@ impl Plugin for WaveTableOscillator {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
 
-        let block_len = buffer.samples().max(128);
+        let block_len = buffer.samples().max(32);
 
         self.oscillators.iter_mut().for_each(|osc| osc.update_smoothers(self.params.as_ref(), block_len));
-        self.table.update_item();
 
         let mut next_event = context.next_event();
 
@@ -141,7 +130,7 @@ impl Plugin for WaveTableOscillator {
 
             let output = sum_to_stereo_sample(self.oscillators
                 .iter_mut()
-                .map(|osc| osc.process(self.table.data()))
+                .map(WTOscVoice::process)
                 .sum()
             );
 

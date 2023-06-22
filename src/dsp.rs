@@ -1,9 +1,8 @@
 pub mod wavetable;
 pub mod wt_osc;
 
-use core_simd::simd::*;
-use std_float::*;
 use plugin_util::*;
+use simd::*; 
 use simd_util::*;
 use math::*;
 

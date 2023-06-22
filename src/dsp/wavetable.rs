@@ -1,7 +1,8 @@
 use hound::{SampleFormat, WavReader};
+use serde::{Serialize, Deserialize};
 use realfft::{RealFftPlanner, num_complex::Complex32};
 use rtrb::{Producer, Consumer, RingBuffer};
-use std::{sync::Arc, path::Path, ops::{Deref, DerefMut, Index}};
+use std::{sync::{Arc}, path::Path, ops::{Deref, DerefMut, Index}};
 
 use super::*;
 
@@ -168,57 +169,77 @@ impl Index<usize> for BandLimitedWaveTables {
     }
 }
 
-pub struct SharedLender<T> {
-    ring_buffer: Producer<Arc<T>>,
+#[derive(Serialize, Deserialize)]
+pub struct SharedLender<T: ?Sized> {
+    #[serde(skip)]
+    ring_buffers: Vec<Producer<Arc<T>>>,
     drop_queue: Vec<Arc<T>>,
 }
 
-impl<T> SharedLender<T> {
-
-    pub fn new() -> (SharedLender<T>, LenderReciever<T>) {
-        let (producer, consumer) = RingBuffer::new(256);
-        (
-            Self {
-                ring_buffer: producer,
-                drop_queue: vec![],
-            },
-            LenderReciever {
-                ring_buffer: consumer,
-                current: None
-            }
-        )
+impl<T: ?Sized> Default for SharedLender<T> {
+    fn default() -> Self {
+        Self {
+            ring_buffers: Default::default(),
+            drop_queue: Default::default() 
+        }
     }
+}
+
+impl<T: ?Sized> SharedLender<T> {
 
     pub fn add(&mut self, item: Arc<T>) {
 
-        self.drop_queue.push(item.clone());
-        self.ring_buffer.push(item).unwrap();
+        self.ring_buffers
+            .iter_mut()
+            .for_each( |producer| {
+                let _ = producer.push(item.clone());
+            });
+
+        self.drop_queue.push(item);
     }
 
     pub fn update_drop_queue(&mut self) {
         self.drop_queue.retain(|item| Arc::strong_count(item) != 1);
+        self.ring_buffers.retain(|producer| !producer.is_abandoned());
     }
 
     pub fn current(&self) -> Option<&T> {
         self.drop_queue.last().map(Deref::deref)
     }
+
+    pub fn create_new_reciever(&mut self) -> LenderReciever<T> {
+
+        let value = self.drop_queue.first().expect("no value to give to lender").clone();
+
+        let (producer, reciever) = RingBuffer::new(128);
+        self.ring_buffers.push(producer);
+
+        LenderReciever {
+            current: value,
+            ring_buffer: reciever
+        }
+    }
 }
 
-pub struct LenderReciever<T> {
-    current: Option<Arc<T>>,
+pub struct LenderReciever<T: ?Sized> {
+    current: Arc<T>,
     ring_buffer: Consumer<Arc<T>>,
 }
 
-impl<T> LenderReciever<T> {
+impl<T: ?Sized> LenderReciever<T> {
+
     pub fn update_item(&mut self) {
         while let Ok(item) = self.ring_buffer.pop() {
             debug_assert!(Arc::strong_count(&item) > 1);
-            self.current = Some(item);
+            self.current = item;
         }
     }
+}
 
-    /// get inner data: undefined behaviour when the data is uninitialized
-    pub fn data(&self) -> &T {
-        unsafe { self.current.as_deref().unwrap_unchecked() }
+impl<T: ?Sized> Deref for LenderReciever<T> {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.current.as_ref()
     }
 }

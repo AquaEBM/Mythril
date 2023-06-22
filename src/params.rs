@@ -1,11 +1,12 @@
+use std::sync::{Mutex, Arc};
+
 use atomic_refcell::AtomicRefCell;
-use parking_lot::Mutex;
 
 use nih_plug::{prelude::*, formatters::*};
 
-use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::MAX_UNISON};
+use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::{MAX_UNISON, WTOscVoice}};
 
-const WAVETABLE_FOLDER_PATH: &str = r"C:\Users\etulyon1\Documents\Coding\Krynth\wavetables";
+const WAVETABLE_FOLDER_PATH: &str = include_str!("wavetable_folder_path.txt");
 
 #[derive(Params)]
 pub struct WTOscParams {
@@ -29,16 +30,17 @@ pub struct WTOscParams {
     pub transpose: FloatParam,
     #[id = "random"]
     pub random: FloatParam,
-    #[persist = "wt"]
+    #[persist = "wtname"]
     pub wt_name: AtomicRefCell<Box<str>>,
     pub wavetable: Mutex<SharedLender<BandLimitedWaveTables>>,
 }
 
-impl WTOscParams {
+impl Default for WTOscParams {
 
-    pub fn new(wavetable: SharedLender<BandLimitedWaveTables>) -> Self {
+    fn default() -> Self {
 
         Self {
+
             level: FloatParam::new(
                 "Level",
                 0.5,
@@ -53,10 +55,12 @@ impl WTOscParams {
                 "Pan",
                 0.,
                 FloatRange::Linear {
-                    min: -1.,
-                    max: 1.
+                    min: f32::EPSILON,
+                    max: 1.,
                 }
-            ).with_value_to_string(v2s_f32_rounded(3)),
+            ).with_value_to_string(Arc::new( |value| {
+                value.mul_add(2., -1.).to_string()
+            })),
 
             num_unison_voices: IntParam::new(
                 "Unison",
@@ -132,9 +136,12 @@ impl WTOscParams {
 
             wt_name: AtomicRefCell::new("Basic Shapes".into()),
 
-            wavetable: Mutex::new(wavetable),
+            wavetable: Default::default(),
         }
     }
+}
+
+impl WTOscParams {
 
     pub fn load_wavetable(&self) {
         let name = self.wt_name.borrow();
@@ -143,6 +150,13 @@ impl WTOscParams {
             format!("{WAVETABLE_FOLDER_PATH}\\{name}.WAV")
         );
 
-        self.wavetable.lock().add(wt);
+        let mut lock = self.wavetable.lock().expect("Issue unlocking the lock");
+
+        lock.add(wt);
+    }
+
+    pub fn create_processor(&self) -> WTOscVoice {
+        let mut lock = self.wavetable.lock().expect("Issue unlocking the lock");
+        WTOscVoice::from_table_lender(lock.create_new_reciever())
     }
 }

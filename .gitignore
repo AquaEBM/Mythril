@@ -1,4 +1,4 @@
 /target
-/Cargo.lock
 /Krynth.code-workspace
 /wavetables
+/src/wavetable_folder_path.txt
