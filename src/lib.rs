@@ -8,7 +8,7 @@ use plugin_util::simd_util::sum_to_stereo_sample;
 use nih_plug::prelude::*;
 use params::WTOscParams;
 
-mod dsp;
+pub mod dsp;
 mod params;
 
 #[derive(Default)]

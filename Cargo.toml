@@ -15,7 +15,6 @@ path = "src/main.rs"
 [dependencies]
 
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"]}
-nih_plug_egui = { git = "https://github.com/robbert-vdh/nih-plug.git" }
 plugin_util = { git = "https://github.com/AquaEBM/plugin_util.git", features = ["non_std_simd"] }
 
 arrayvec = "0.7"

@@ -90,7 +90,7 @@ pub fn triangular_pan_weights(pan: Float) -> Float {
 }
 
 #[derive(Default)]
-struct Oscillator {
+pub struct Oscillator {
     /// phase delta before unison detuning, pitch bend (coming soon lol), transposition
     base_phase_delta: Float,
     phase_delta: LogSmoother<MAX_VECTOR_WIDTH>,
@@ -110,15 +110,20 @@ impl Oscillator {
     }
 
     /// 0 <= start <= end < MAX_VECTOR_WIDTH
-    pub fn randomize_phase(&mut self, randomisation: f32x2, start: usize, end: usize) {
-        unsafe { self.phase.as_mut_array().get_unchecked_mut(start..end) }
+    pub fn randomize_phase(&mut self, randomisation: Float, start: usize, end: usize) {
+
+        let mut phase = Simd::splat(0.);
+        unsafe { phase.as_mut_array().get_unchecked_mut(start..end) } 
             .iter_mut()
-            .enumerate()
-            .for_each(
-                |(i, sample)| *sample = flp_to_fxp(Simd::from_array([
-                    random::<f32>() * randomisation[(start + i) & 1]
-                ]))[0]
-            );
+            .for_each( |value| *value = random());
+
+        let mut fixed_phase = flp_to_fxp(phase * randomisation);
+
+        unsafe { fixed_phase.as_array().get_unchecked(start..end) }
+            .iter()
+            .zip(unsafe { self.phase.as_mut_array().get_unchecked_mut(start..end) })
+            .for_each( |(&input, output)| *output = input)
+
     }
 
     pub fn update_phase_delta_smoother(&mut self) {
@@ -157,7 +162,8 @@ pub struct WaveTableOscVoice {
     center_osc: Oscillator,
     detuned_oscs: ArrayVec<Oscillator, {NUM_UNISON_VECTORS - 1}>,
     mask: TMask,
-    randomisation: f32x2,
+    randomisation: Float,
+    num_unison_voices: usize,
 }
 
 impl WaveTableOscVoice {
@@ -178,8 +184,8 @@ impl WaveTableOscVoice {
         self.detuned_oscs.iter_mut().for_each(Oscillator::reset_phase);
     }
 
-    pub fn set_num_unison_voices(num: usize) {
-        
+    pub fn set_num_unison_voices(&mut self, num: usize) {
+        let diff = self.num_unison_voices as isize - num as isize;
     }
 }
 
@@ -290,13 +296,13 @@ impl WTOscVoice {
             .zip(as_stereo_sample_array(&detune).iter().copied().map(splat_stereo))
             .zip(as_stereo_sample_array(&transpose).iter().copied().map(splat_stereo))
             .zip(as_stereo_sample_array(&frame).iter().copied().map(splat_stereo))
-            .zip(as_stereo_sample_array(&random).iter().copied())
+            .zip(as_stereo_sample_array(&random).iter().copied().map(splat_stereo))
             .for_each( |((((voice, detune), transpose), frame), random)| {
 
                 voice.mask = remainder_mask;
                 voice.randomisation = random;
 
-                voice.oscillators
+                voice.detuned_oscs
                     .iter_mut()
                     .zip(norm_detunes.iter())
                     .for_each( |(osc, norm_detune)| {
