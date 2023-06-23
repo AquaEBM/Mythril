@@ -178,8 +178,8 @@ impl WaveTableOscVoice {
         self.detuned_oscs.iter_mut().for_each(Oscillator::reset_phase);
     }
 
-    pub fn randomize_osc_phases(&mut self, start: usize, end: usize) {
-        self.center_osc.randomize_phase(self.randomisation, start, end)
+    pub fn set_num_unison_voices(num: usize) {
+        
     }
 }
 
