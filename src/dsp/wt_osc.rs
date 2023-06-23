@@ -1,7 +1,7 @@
 use super::{*, wavetable::{BandLimitedWaveTables, LenderReciever}};
 use std::{array, mem::transmute};
 use arrayvec::ArrayVec;
-use nih_plug::{prelude::Param, util};
+use nih_plug::prelude::Param;
 use params::WTOscParams;
 use rand::random;
 use smoothing::*;
@@ -11,7 +11,7 @@ use smoothing::*;
 pub const MAX_UNISON: usize = 16;
 const NUM_UNISON_VECTORS: usize = enclosing_div(MAX_UNISON, MAX_VECTOR_WIDTH);
 
-const UNISON_DETUNES: [[Float ; NUM_UNISON_VECTORS] ; MAX_UNISON + 1] = {
+static UNISON_DETUNES: [[Float ; NUM_UNISON_VECTORS] ; MAX_UNISON + 1] = {
 
     assert!(MAX_VECTOR_WIDTH >= 2);
 
@@ -65,6 +65,7 @@ pub fn semitones_to_ratio(semitones: Float) -> Float {
 
 /// circular panning of a vector of stereo samples, 0 < pan <= 1
 pub fn triangular_pan_weights(pan: Float) -> Float {
+
     let sign_mask: Float = {
         let mut array = [0. ; MAX_VECTOR_WIDTH];
         let mut i = 0;
@@ -88,9 +89,9 @@ pub fn triangular_pan_weights(pan: Float) -> Float {
     Float::from_bits(pan.to_bits() ^ sign_mask.to_bits()) + alternating_onef
 }
 
+#[derive(Default)]
 struct Oscillator {
-    /// phase delta before unison detuning, pitch bend, transposition
-    /// (coming soon lol)
+    /// phase delta before unison detuning, pitch bend (coming soon lol), transposition
     base_phase_delta: Float,
     phase_delta: LogSmoother<MAX_VECTOR_WIDTH>,
     phase: UInt,
@@ -108,11 +109,23 @@ impl Oscillator {
         phase_delta_fixed_point
     }
 
+    /// 0 <= start <= end < MAX_VECTOR_WIDTH
+    pub fn randomize_phase(&mut self, randomisation: f32x2, start: usize, end: usize) {
+        unsafe { self.phase.as_mut_array().get_unchecked_mut(start..end) }
+            .iter_mut()
+            .enumerate()
+            .for_each(
+                |(i, sample)| *sample = flp_to_fxp(Simd::from_array([
+                    random::<f32>() * randomisation[(start + i) & 1]
+                ]))[0]
+            );
+    }
+
     pub fn update_phase_delta_smoother(&mut self) {
         self.phase_delta.tick()
     }
 
-    pub fn reset(&mut self) {
+    pub fn reset_phase(&mut self) {
         self.phase = Default::default();
     }
 
@@ -125,72 +138,66 @@ impl Oscillator {
         self.old_frame = self.new_frame;
         self.new_frame = frame;
     }
+
+    pub fn advance_and_resample_select(&mut self, table: &BandLimitedWaveTables, mask: TMask) -> Float {
+        self.update_phase_delta_smoother();
+        let phase_delta = self.advance_phase();
+        table.resample_select(phase_delta, self.new_frame, self.phase, mask)
+    }
+
+    pub fn advance_and_resample(&mut self, table: &BandLimitedWaveTables) -> Float {
+        self.update_phase_delta_smoother();
+        let phase_delta = self.advance_phase();
+        table.resample(phase_delta, self.new_frame, self.phase)
+    }
 }
 
+#[derive(Default)]
 pub struct WaveTableOscVoice {
-    note_id: u8,
-    oscillators: [Oscillator ; NUM_UNISON_VECTORS],
+    center_osc: Oscillator,
+    detuned_oscs: ArrayVec<Oscillator, {NUM_UNISON_VECTORS - 1}>,
     mask: TMask,
-    randomisation: Float,
+    randomisation: f32x2,
 }
 
 impl WaveTableOscVoice {
-    /// random: [0 ; 1]
-    pub fn new(note_id: u8, randomisation: Float, sample_rate: f32) -> Self {
-
-        let note_freq = Float::splat(util::midi_note_to_freq(note_id) / sample_rate);
-
-        Self {
-            note_id,
-            mask: Default::default(),
-            oscillators: array::from_fn(|_| {
-
-                let mut phases = Float::splat(0.);
-
-                for phase in as_mut_stereo_sample_array(&mut phases) {
-                    *phase = f32x2::splat(random());
-                }
-
-                phases *= randomisation;
-
-                Oscillator {
-                    phase: flp_to_fxp(phases),
-                    phase_delta: Default::default(),
-                    old_frame: Default::default(),
-                    new_frame: Default::default(),
-                    base_phase_delta: note_freq
-                }
-            }),
-            randomisation
-        }
-    }
 
     pub fn update_phases_and_resample(&mut self, table: &BandLimitedWaveTables) -> f32x2 {
 
-        let center_osc = unsafe { self.oscillators.get_unchecked_mut(0) };
+        let mut voice_samples = self.center_osc.advance_and_resample_select(table, self.mask);
 
-        let mut voice_samples = {
-
-            let phase_delta = center_osc.advance_phase();
-
-            table.resample_select(phase_delta, center_osc.new_frame, center_osc.phase, self.mask)
-        };
-
-        let detuned_oscs = unsafe { self.oscillators.get_unchecked_mut(1..) };
-
-        for osc in detuned_oscs.iter_mut() {
-
-            let phase_delta = osc.advance_phase();
-
-            voice_samples += table.resample(phase_delta, osc.new_frame, osc.phase);
-        }
+        self.detuned_oscs.iter_mut().for_each(
+            |osc| voice_samples += osc.advance_and_resample(table)
+        );
 
         sum_to_stereo_sample(voice_samples)
     }
 
     pub fn reset(&mut self) {
-        self.oscillators.iter_mut().for_each(Oscillator::reset)
+        self.center_osc.reset_phase();
+        self.detuned_oscs.iter_mut().for_each(Oscillator::reset_phase);
     }
+
+    pub fn randomize_osc_phases(&mut self, start: usize, end: usize) {
+        self.center_osc.randomize_phase(self.randomisation, start, end)
+    }
+}
+
+pub fn flip_pairs(v: Float) -> Float {
+    const FLIP_PAIRS: [usize ; MAX_VECTOR_WIDTH] = {
+
+        let mut array = [0 ; MAX_VECTOR_WIDTH];
+
+        let mut i = 0;
+        while i < MAX_VECTOR_WIDTH {
+
+            array[i] = i ^ 1;
+            i += 1;
+        }
+        array
+    };
+ 
+    simd_swizzle!(v, FLIP_PAIRS)
 }
 
 pub struct WTOscVoice {
@@ -220,26 +227,17 @@ impl WTOscVoice {
 
         let mut output = Simd::splat(0.);
 
-        let output_samples_ref = as_mut_stereo_sample_array(&mut output);
+        self.voices
+            .iter_mut()
+            .zip(as_mut_stereo_sample_array(&mut output))
+            .for_each( |(voice, sample)| {
+                *sample = voice.update_phases_and_resample(&self.table);
+            });
 
-        for (i, voice) in self.voices.iter_mut().enumerate() {
-            output_samples_ref[i] = voice.update_phases_and_resample(&self.table);
-        }
+        let flipped = flip_pairs(output);
 
-        const FLIP_PAIRS: [usize ; MAX_VECTOR_WIDTH] = {
-
-            let mut array = [0 ; MAX_VECTOR_WIDTH];
-    
-            let mut i = 0;
-            while i < MAX_VECTOR_WIDTH {
-    
-                array[i] = i ^ 1;
-                i += 1;
-            }
-            array
-        };
-     
-        let flipped = simd_swizzle!(output, FLIP_PAIRS);
+        self.normal_weights.tick();
+        self.flipped_weights.tick();
 
         *self.normal_weights * output + *self.flipped_weights * flipped
     }
@@ -256,12 +254,6 @@ impl WTOscVoice {
     }
 
     pub fn remove_voice(&mut self, note: u8) -> bool {
-        for (i, voice) in self.voices.iter().enumerate() {
-            if voice.note_id == note {
-                self.voices.swap_remove(i);
-                return true;
-            }
-        }
 
         false
     }
@@ -298,7 +290,7 @@ impl WTOscVoice {
             .zip(as_stereo_sample_array(&detune).iter().copied().map(splat_stereo))
             .zip(as_stereo_sample_array(&transpose).iter().copied().map(splat_stereo))
             .zip(as_stereo_sample_array(&frame).iter().copied().map(splat_stereo))
-            .zip(as_stereo_sample_array(&random).iter().copied().map(splat_stereo))
+            .zip(as_stereo_sample_array(&random).iter().copied())
             .for_each( |((((voice, detune), transpose), frame), random)| {
 
                 voice.mask = remainder_mask;
@@ -317,17 +309,17 @@ impl WTOscVoice {
 
         let level = Simd::splat(params.level.unmodulated_plain_value()) * self.normalize;
         let stereo = Simd::splat(params.stereo_unison.unmodulated_plain_value());
-        let pan_weight = triangular_pan_weights(Simd::splat(
-            params.pan.unmodulated_plain_value()
-        ));
+        
+        let pan = Simd::splat(params.pan.unmodulated_plain_value());
+        let pan_weights = triangular_pan_weights(pan);
 
         self.normal_weights.set_target(
-            pan_weight.mul_add(stereo, pan_weight).sqrt() * level,
+            pan_weights.mul_add(stereo, pan_weights).sqrt() * level,
             block_len
         );
 
         self.flipped_weights.set_target(
-            pan_weight.mul_add(-stereo, pan_weight).sqrt() * level,
+            pan_weights.mul_add(-stereo, pan_weights).sqrt() * level,
             block_len
         );
     }
