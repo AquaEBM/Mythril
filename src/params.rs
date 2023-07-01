@@ -6,7 +6,7 @@ use nih_plug::{prelude::*, formatters::*};
 
 use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::{MAX_UNISON, WTOscVoice}};
 
-const WAVETABLE_FOLDER_PATH: &str = include_str!("wavetable_folder_path.txt");
+const WAVETABLE_FOLDER_PATH: &str = concat!("../", include_str!("../wavetable_folder_path.txt"));
 
 #[derive(Params)]
 pub struct WTOscParams {
