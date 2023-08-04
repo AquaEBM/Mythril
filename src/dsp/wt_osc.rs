@@ -1,5 +1,5 @@
 use super::{*, wavetable::{BandLimitedWaveTables, LenderReciever}};
-use std::{array, mem::transmute};
+use std::{array, mem::transmute, cmp::Ordering};
 use arrayvec::ArrayVec;
 use nih_plug::prelude::Param;
 use params::WTOscParams;
@@ -63,6 +63,13 @@ pub fn semitones_to_ratio(semitones: Float) -> Float {
     exp2(semitones * RATIO)
 }
 
+pub fn splat_per_voice_samples<T: SimdElement>(
+    data: &Simd<T, MAX_VECTOR_WIDTH>
+) -> impl Iterator<Item = Simd<T, MAX_VECTOR_WIDTH>> + '_
+{
+    as_stereo_sample_array(data).iter().copied().map(splat_stereo)
+}
+
 /// circular panning of a vector of stereo samples, 0 < pan <= 1
 pub fn triangular_pan_weights(pan: Float) -> Float {
 
@@ -117,13 +124,12 @@ impl Oscillator {
             .iter_mut()
             .for_each( |value| *value = random());
 
-        let mut fixed_phase = flp_to_fxp(phase * randomisation);
+        let fixed_phase = flp_to_fxp(phase * randomisation);
 
         unsafe { fixed_phase.as_array().get_unchecked(start..end) }
             .iter()
             .zip(unsafe { self.phase.as_mut_array().get_unchecked_mut(start..end) })
             .for_each( |(&input, output)| *output = input)
-
     }
 
     pub fn update_phase_delta_smoother(&mut self) {
@@ -168,7 +174,7 @@ pub struct WaveTableOscVoice {
 
 impl WaveTableOscVoice {
 
-    pub fn update_phases_and_resample(&mut self, table: &BandLimitedWaveTables) -> f32x2 {
+    pub fn process(&mut self, table: &BandLimitedWaveTables) -> f32x2 {
 
         let mut voice_samples = self.center_osc.advance_and_resample_select(table, self.mask);
 
@@ -184,8 +190,8 @@ impl WaveTableOscVoice {
         self.detuned_oscs.iter_mut().for_each(Oscillator::reset_phase);
     }
 
+    /// num >= 1
     pub fn set_num_unison_voices(&mut self, num: usize) {
-        let diff = self.num_unison_voices as isize - num as isize;
     }
 }
 
@@ -236,9 +242,7 @@ impl WTOscVoice {
         self.voices
             .iter_mut()
             .zip(as_mut_stereo_sample_array(&mut output))
-            .for_each( |(voice, sample)| {
-                *sample = voice.update_phases_and_resample(&self.table);
-            });
+            .for_each(|(voice, sample)| *sample = voice.process(&self.table));
 
         let flipped = flip_pairs(output);
 
@@ -272,8 +276,7 @@ impl WTOscVoice {
 
         self.table.update_item();
         
-        let detune = Simd::splat(params.detune.unmodulated_plain_value()) * 
-                    Simd::splat(params.detune_range.unmodulated_normalized_value());
+        let detune = Simd::splat(params.detune.unmodulated_plain_value()) * Simd::splat(params.detune_range.unmodulated_normalized_value());
 
         let transpose = Simd::splat(params.transpose.unmodulated_plain_value());
 
@@ -293,10 +296,10 @@ impl WTOscVoice {
         let norm_detunes = &UNISON_DETUNES[voices][..num_full_vectors];
 
         self.voices.iter_mut()
-            .zip(as_stereo_sample_array(&detune).iter().copied().map(splat_stereo))
-            .zip(as_stereo_sample_array(&transpose).iter().copied().map(splat_stereo))
-            .zip(as_stereo_sample_array(&frame).iter().copied().map(splat_stereo))
-            .zip(as_stereo_sample_array(&random).iter().copied().map(splat_stereo))
+            .zip(splat_per_voice_samples(&detune))
+            .zip(splat_per_voice_samples(&transpose))
+            .zip(splat_per_voice_samples(&frame))
+            .zip(splat_per_voice_samples(&random))
             .for_each( |((((voice, detune), transpose), frame), random)| {
 
                 voice.mask = remainder_mask;
@@ -315,7 +318,7 @@ impl WTOscVoice {
 
         let level = Simd::splat(params.level.unmodulated_plain_value()) * self.normalize;
         let stereo = Simd::splat(params.stereo_unison.unmodulated_plain_value());
-        
+
         let pan = Simd::splat(params.pan.unmodulated_plain_value());
         let pan_weights = triangular_pan_weights(pan);
 

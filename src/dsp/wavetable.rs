@@ -1,8 +1,7 @@
 use hound::{SampleFormat, WavReader};
-use serde::{Serialize, Deserialize};
 use realfft::{RealFftPlanner, num_complex::Complex32};
 use rtrb::{Producer, Consumer, RingBuffer};
-use std::{sync::{Arc}, path::Path, ops::{Deref, DerefMut, Index}};
+use std::{sync::Arc, path::Path, ops::{Deref, DerefMut, Index}};
 
 use super::*;
 
@@ -169,9 +168,7 @@ impl Index<usize> for BandLimitedWaveTables {
     }
 }
 
-#[derive(Serialize, Deserialize)]
 pub struct SharedLender<T: ?Sized> {
-    #[serde(skip)]
     ring_buffers: Vec<Producer<Arc<T>>>,
     drop_queue: Vec<Arc<T>>,
 }
