@@ -1,5 +1,5 @@
 use super::{*, wavetable::{BandLimitedWaveTables, LenderReciever}};
-use std::{array, mem::transmute, cmp::Ordering};
+use std::{array, mem::transmute, cmp::Ordering, iter};
 use arrayvec::ArrayVec;
 use nih_plug::prelude::Param;
 use params::WTOscParams;
@@ -186,12 +186,16 @@ impl WaveTableOscVoice {
     }
 
     pub fn reset(&mut self) {
-        self.center_osc.reset_phase();
-        self.detuned_oscs.iter_mut().for_each(Oscillator::reset_phase);
+
+        iter::once(&mut self.center_osc)
+            .chain(self.detuned_oscs.iter_mut())
+            .for_each(Oscillator::reset_phase);
     }
 
     /// num >= 1
     pub fn set_num_unison_voices(&mut self, num: usize) {
+        let diff = self.num_unison_voices as isize - num as isize;
+        
     }
 }
 
