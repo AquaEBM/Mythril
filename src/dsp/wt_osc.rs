@@ -1,7 +1,7 @@
 use super::{*, wavetable::{BandLimitedWaveTables, LenderReciever}};
-use std::{array, mem::transmute, cmp::Ordering, iter};
+use std::{array, mem::transmute};
 use arrayvec::ArrayVec;
-use nih_plug::prelude::Param;
+use nih_plug::{prelude::Param, util};
 use params::WTOscParams;
 use rand::random;
 use smoothing::*;
@@ -96,7 +96,7 @@ pub fn triangular_pan_weights(pan: Float) -> Float {
     Float::from_bits(pan.to_bits() ^ sign_mask.to_bits()) + alternating_onef
 }
 
-#[derive(Default)]
+#[derive(Default, Clone, Copy)]
 pub struct Oscillator {
     /// phase delta before unison detuning, pitch bend (coming soon lol), transposition
     base_phase_delta: Float,
@@ -107,6 +107,14 @@ pub struct Oscillator {
 }
 
 impl Oscillator {
+
+    pub fn from_normalized_frequency(norm_freq: Float) -> Self {
+        Self {
+            base_phase_delta: norm_freq,
+            ..Default::default()
+        }
+    }
+
     pub fn advance_phase(&mut self) -> UInt {
 
         let phase_delta_fixed_point = flp_to_fxp(*self.phase_delta);
@@ -117,19 +125,15 @@ impl Oscillator {
     }
 
     /// 0 <= start <= end < MAX_VECTOR_WIDTH
-    pub fn randomize_phase(&mut self, randomisation: Float, start: usize, end: usize) {
+    pub fn randomize_phase(&mut self, randomisation: Float) {
 
         let mut phase = Simd::splat(0.);
-        unsafe { phase.as_mut_array().get_unchecked_mut(start..end) } 
+
+        as_mut_stereo_sample_array(&mut phase)
             .iter_mut()
-            .for_each( |value| *value = random());
+            .for_each(|sample| *sample = Simd::splat(random()));
 
-        let fixed_phase = flp_to_fxp(phase * randomisation);
-
-        unsafe { fixed_phase.as_array().get_unchecked(start..end) }
-            .iter()
-            .zip(unsafe { self.phase.as_mut_array().get_unchecked_mut(start..end) })
-            .for_each( |(&input, output)| *output = input)
+        self.phase = flp_to_fxp(phase * randomisation);
     }
 
     pub fn update_phase_delta_smoother(&mut self) {
@@ -166,13 +170,24 @@ impl Oscillator {
 #[derive(Default)]
 pub struct WaveTableOscVoice {
     center_osc: Oscillator,
-    detuned_oscs: ArrayVec<Oscillator, {NUM_UNISON_VECTORS - 1}>,
+    num_detuned_oscs: usize,
+    detuned_oscs: [Oscillator ; NUM_UNISON_VECTORS - 1],
     mask: TMask,
     randomisation: Float,
-    num_unison_voices: usize,
 }
 
 impl WaveTableOscVoice {
+
+    pub fn from_normalized_frequency(norm_freq: f32) -> Self {
+
+        let base_osc = Oscillator::from_normalized_frequency(Simd::splat(norm_freq));
+
+        Self {
+            center_osc: base_osc,
+            detuned_oscs: [base_osc ; NUM_UNISON_VECTORS - 1],
+            ..Default::default()
+        }
+    }
 
     pub fn process(&mut self, table: &BandLimitedWaveTables) -> f32x2 {
 
@@ -187,15 +202,22 @@ impl WaveTableOscVoice {
 
     pub fn reset(&mut self) {
 
-        iter::once(&mut self.center_osc)
-            .chain(self.detuned_oscs.iter_mut())
-            .for_each(Oscillator::reset_phase);
+        self.center_osc.reset_phase();
+        self.detuned_oscs.iter_mut().for_each(Oscillator::reset_phase);
     }
 
     /// num >= 1
     pub fn set_num_unison_voices(&mut self, num: usize) {
-        let diff = self.num_unison_voices as isize - num as isize;
-        
+        self.num_detuned_oscs = enclosing_div(num, MAX_VECTOR_WIDTH) - 1;
+    }
+
+    pub fn randomize_phases(&mut self) {
+        self.center_osc.randomize_phase(self.randomisation);
+        self.detuned_oscs.iter_mut().for_each(|osc| osc.randomize_phase(self.randomisation));
+    }
+
+    pub fn detuned_oscillators(&mut self) -> &mut [Oscillator] {
+        unsafe { self.detuned_oscs.get_unchecked_mut(..self.num_detuned_oscs) }
     }
 }
 
@@ -264,16 +286,21 @@ impl WTOscVoice {
         self.voices.is_empty()
     }
 
-    pub fn add_voice(&mut self, note_id: u8, sample_rate: f32) {
-    }
-
-    pub fn remove_voice(&mut self, note: u8) -> bool {
-
-        false
-    }
-
     pub fn reset(&mut self) {
         self.voices.iter_mut().for_each(WaveTableOscVoice::reset)
+    }
+
+    pub fn add_voice(&mut self, note: u8, sr: f32) {
+
+        self.voices.push(
+            WaveTableOscVoice::from_normalized_frequency(
+                util::midi_note_to_freq(note) / sr
+            )
+        )
+    }
+
+    pub fn remove_voice(&mut self, index: usize) {
+        self.voices.swap_remove(index);
     }
 
     pub fn update_smoothers(&mut self, params: &WTOscParams, block_len: usize) {
@@ -288,16 +315,21 @@ impl WTOscVoice {
 
         let random = Simd::splat(params.random.unmodulated_plain_value());
 
-        let voices = params.num_unison_voices.unmodulated_plain_value() as usize;
+        let num_voices = params.num_unison_voices.unmodulated_plain_value() as usize;
 
-        let n = voices + (voices & 1);
+        let n = num_voices + (num_voices & 1);
         self.normalize = ONE_F / Simd::splat(n as f32).sqrt();
         
         let remainder = (n - 1) % MAX_VECTOR_WIDTH + 1;
         let num_full_vectors = (n - 1) / MAX_VECTOR_WIDTH;
 
         let remainder_mask = TMask::from_array(array::from_fn(|i| i < remainder));
-        let norm_detunes = &UNISON_DETUNES[voices][..num_full_vectors];
+
+        let norm_detunes = unsafe {
+            UNISON_DETUNES
+                .get_unchecked(num_voices)
+                .get_unchecked(..num_full_vectors)
+        };
 
         self.voices.iter_mut()
             .zip(splat_per_voice_samples(&detune))
@@ -308,15 +340,22 @@ impl WTOscVoice {
 
                 voice.mask = remainder_mask;
                 voice.randomisation = random;
+                voice.set_num_unison_voices(num_voices);
+                let center_osc = &mut voice.center_osc;
 
-                voice.detuned_oscs
+                let center_norm_detune = unsafe { norm_detunes.get_unchecked(0) };
+                let center_detune_semitones = center_norm_detune.mul_add(detune, transpose);
+                center_osc.set_frame(frame);
+                center_osc.set_detune_semitones_smoothed(center_detune_semitones, block_len);
+
+                voice.detuned_oscillators()
                     .iter_mut()
-                    .zip(norm_detunes.iter())
-                    .for_each( |(osc, norm_detune)| {
+                    .zip(unsafe { norm_detunes.get_unchecked(1..) })
+                    .for_each( |(detuned_osc, norm_detune)| {
 
-                        let total_detune_semitones = norm_detune.mul_add(detune, transpose);
-                        osc.set_detune_semitones_smoothed(total_detune_semitones, block_len);
-                        osc.set_frame(frame);
+                        let detune_semitones = norm_detune.mul_add(detune, transpose);
+                        detuned_osc.set_detune_semitones_smoothed(detune_semitones, block_len);
+                        detuned_osc.set_frame(frame);
                     })
         });
 

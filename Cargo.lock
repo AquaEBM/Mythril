@@ -408,7 +408,7 @@ dependencies = [
 [[package]]
 name = "core_simd"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#73d7eb5f73ba6abd3328c9c49c524d5f945498e0"
+source = "git+https://github.com/rust-lang/portable-simd.git#490b5cf7a123c10c69b15816e349e2ee7025ee1a"
 
 [[package]]
 name = "coreaudio-rs"
@@ -1191,7 +1191,7 @@ checksum = "26072860ba924cbfa98ea39c8c19b4dd6a4a25423dbdf219c1eca91aa0cf6964"
 [[package]]
 name = "plugin_util"
 version = "0.1.0"
-source = "git+https://github.com/AquaEBM/plugin_util.git#c461d6fb95b54ab0c1e549df53464e1784b9267f"
+source = "git+https://github.com/AquaEBM/plugin_util.git#30f3cb58e5b71cd1c290e812e68bc6cb719eb1cc"
 dependencies = [
  "cfg-if",
  "core_simd",
@@ -1449,7 +1449,7 @@ checksum = "a507befe795404456341dfab10cef66ead4c041f62b8b11bbb92bffe5d0953e0"
 [[package]]
 name = "std_float"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#73d7eb5f73ba6abd3328c9c49c524d5f945498e0"
+source = "git+https://github.com/rust-lang/portable-simd.git#490b5cf7a123c10c69b15816e349e2ee7025ee1a"
 dependencies = [
  "core_simd",
 ]

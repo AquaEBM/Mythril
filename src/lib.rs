@@ -3,17 +3,22 @@
 use std::{sync::Arc, num::NonZeroU32};
 
 use arrayvec::ArrayVec;
-use dsp::{NUM_VECTORS, wt_osc::WTOscVoice};
-use plugin_util::simd_util::sum_to_stereo_sample;
+use dsp::wt_osc::WTOscVoice;
+use plugin_util::simd_util::{sum_to_stereo_sample, MAX_VECTOR_WIDTH, enclosing_div};
 use nih_plug::prelude::*;
 use params::WTOscParams;
 
 pub mod dsp;
 mod params;
 
+pub const MAX_POLYPHONY: usize = 128;
+pub const NUM_VECTORS: usize = enclosing_div(MAX_POLYPHONY, VOICES_PER_VECTOR);
+pub const VOICES_PER_VECTOR: usize = MAX_VECTOR_WIDTH / 2;
+
 #[derive(Default)]
 pub struct WaveTableOscillator {
     params: Arc<WTOscParams>,
+    voice_manager: ArrayVec<ArrayVec<u8, VOICES_PER_VECTOR>, NUM_VECTORS>,
     oscillators: ArrayVec<WTOscVoice, NUM_VECTORS>,
 }
 
@@ -22,18 +27,12 @@ impl WaveTableOscillator {
 
         if let Some(osc) = self.oscillators.last_mut().filter(|osc| !osc.is_full()) {
 
-            osc
-        } else {
-
-            // TODO: this is problematic, it waits for a lock
-            let _ = self.oscillators.try_push(self.params.create_processor());
-
-            let osc = self.oscillators.last_mut().unwrap(); // garanteed to succeed
-
-            osc.update_smoothers(self.params.as_ref(), 32);
-
-            osc
-        }.add_voice(note, sr);
+            osc.add_voice(note, sr);
+        } else if !self.oscillators.is_full() {
+            self.oscillators.push(self.params.create_processor());
+            let osc = self.oscillators.last_mut().unwrap(); // never panics because we just pushed an element
+            osc.add_voice(note, sr);
+        }
     }
 }
 
@@ -103,18 +102,17 @@ impl Plugin for WaveTableOscillator {
 
                     NoteEvent::NoteOff { note, .. } => {
 
-                        let mut empty_osc = None;
-
-                        for (i, osc) in self.oscillators.iter_mut().enumerate() {
-                            if osc.remove_voice(note) {
-                                if osc.is_empty() {
-                                    empty_osc = Some(i);
+                        'outer: for (ids, oscs) in self.voice_manager
+                            .iter()
+                            .zip(self.oscillators.iter_mut())
+                        {
+                            for (i, id) in ids.iter().enumerate() {
+                                if &note == id {
+                                    oscs.remove_voice(i);
+                                    break 'outer;
                                 }
-                                break;
                             }
                         }
-
-                        empty_osc.map(|empty_osc_index| self.oscillators.swap_remove(empty_osc_index));
                     },
 
                     NoteEvent::NoteOn { note, .. } => {
