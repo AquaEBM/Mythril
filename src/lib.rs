@@ -20,19 +20,29 @@ pub struct WaveTableOscillator {
     params: Arc<WTOscParams>,
     voice_manager: ArrayVec<ArrayVec<u8, VOICES_PER_VECTOR>, NUM_VECTORS>,
     oscillators: ArrayVec<WTOscVoice, NUM_VECTORS>,
+    sr: f32,
 }
 
 impl WaveTableOscillator {
-    pub fn add_voice(&mut self, note: u8, sr: f32) {
+    pub fn add_voice(&mut self, note: u8) {
 
-        if let Some(osc) = self.oscillators.last_mut().filter(|osc| !osc.is_full()) {
+        if let Some((oscs, ids)) = self.oscillators
+            .iter_mut()
+            .zip(self.voice_manager.iter_mut())
+            .find(|(_, ids)| !ids.is_full())
+        {
+            oscs.add_voice(note);
+            ids.push(note);
 
-            osc.add_voice(note, sr);
-        } else if !self.oscillators.is_full() {
-            self.oscillators.push(self.params.create_processor());
-            let osc = self.oscillators.last_mut().unwrap(); // never panics because we just pushed an element
-            osc.add_voice(note, sr);
-        }
+        } else if self.voice_manager.try_push(Default::default()).is_ok() {
+
+            let mut voices = self.params.clone().create_processor();
+            voices.set_sample_rate(self.sr);
+            voices.add_voice(note);
+            voices.update_smoothers(64);
+            self.oscillators.push(voices);
+            self.voice_manager.last_mut().unwrap().push(note)
+        };
     }
 }
 
@@ -72,11 +82,12 @@ impl Plugin for WaveTableOscillator {
     fn initialize(
         &mut self,
         _audio_io_layout: &AudioIOLayout,
-        _buffer_config: &BufferConfig,
+        buffer_config: &BufferConfig,
         _context: &mut impl InitContext<Self>,
     ) -> bool {
 
         self.params.load_wavetable();
+        self.sr = buffer_config.sample_rate;
         true
     }
 
@@ -89,7 +100,7 @@ impl Plugin for WaveTableOscillator {
 
         let block_len = buffer.samples().max(32);
 
-        self.oscillators.iter_mut().for_each(|osc| osc.update_smoothers(self.params.as_ref(), block_len));
+        self.oscillators.iter_mut().for_each(|osc| osc.update_smoothers(block_len));
 
         let mut next_event = context.next_event();
 
@@ -103,12 +114,13 @@ impl Plugin for WaveTableOscillator {
                     NoteEvent::NoteOff { note, .. } => {
 
                         'outer: for (ids, oscs) in self.voice_manager
-                            .iter()
+                            .iter_mut()
                             .zip(self.oscillators.iter_mut())
                         {
                             for (i, id) in ids.iter().enumerate() {
                                 if &note == id {
                                     oscs.remove_voice(i);
+                                    ids.swap_remove(i);
                                     break 'outer;
                                 }
                             }
@@ -117,7 +129,7 @@ impl Plugin for WaveTableOscillator {
 
                     NoteEvent::NoteOn { note, .. } => {
 
-                        self.add_voice(note, context.transport().sample_rate);
+                        self.add_voice(note);
                     },
 
                     _ => (),
@@ -143,7 +155,8 @@ impl Plugin for WaveTableOscillator {
     }
 
     fn reset(&mut self) {
-        self.oscillators.clear()
+        self.oscillators.clear();
+        self.voice_manager.clear();
     }
 }
 

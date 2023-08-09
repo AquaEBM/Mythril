@@ -6,7 +6,7 @@ use nih_plug::{prelude::*, formatters::*};
 
 use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::{MAX_UNISON, WTOscVoice}};
 
-const WAVETABLE_FOLDER_PATH: &str = concat!("../", include_str!("../wavetable_folder_path.txt"));
+const WAVETABLE_FOLDER_PATH: &str = "C:\\Users\\Mohammad\\Documents\\coding\\Krynth\\wavetables";
 
 #[derive(Params)]
 pub struct WTOscParams {
@@ -53,13 +53,14 @@ impl Default for WTOscParams {
 
             pan: FloatParam::new(
                 "Pan",
-                0.,
+                0.5,
                 FloatRange::Linear {
                     min: f32::EPSILON,
                     max: 1.,
                 }
             ).with_value_to_string(Arc::new( |value| {
-                value.mul_add(2., -1.).to_string()
+                let v = value.mul_add(2., -1.);
+                format!("{v:.3}")
             })),
 
             num_unison_voices: IntParam::new(
@@ -155,8 +156,11 @@ impl WTOscParams {
         lock.add(wt);
     }
 
-    pub fn create_processor(&self) -> WTOscVoice {
-        let mut lock = self.wavetable.lock().expect("Issue unlocking the lock");
-        WTOscVoice::from_table_lender(lock.create_new_reciever())
+    pub fn create_processor(self: Arc<Self>) -> WTOscVoice {
+        let table = {
+            let mut lock = self.wavetable.lock().expect("Issue unlocking the lock");
+            lock.create_new_reciever()
+        };
+        WTOscVoice::new(table, self)
     }
 }

@@ -1,5 +1,5 @@
 use super::{*, wavetable::{BandLimitedWaveTables, LenderReciever}};
-use std::{array, mem::transmute};
+use std::{array, mem::transmute, sync::Arc};
 use arrayvec::ArrayVec;
 use nih_plug::{prelude::Param, util};
 use params::WTOscParams;
@@ -70,12 +70,12 @@ pub fn splat_per_voice_samples<T: SimdElement>(
     as_stereo_sample_array(data).iter().copied().map(splat_stereo)
 }
 
-/// circular panning of a vector of stereo samples, 0 < pan <= 1
+/// triangluar panning of a vector of stereo samples, 0 < pan <= 1
 pub fn triangular_pan_weights(pan: Float) -> Float {
 
     let sign_mask: Float = {
         let mut array = [0. ; MAX_VECTOR_WIDTH];
-        let mut i = 0;
+        let mut i = 1;
         while i < MAX_VECTOR_WIDTH {
             array[i] = -0.;
             i += 2;
@@ -85,7 +85,7 @@ pub fn triangular_pan_weights(pan: Float) -> Float {
 
     let alternating_onef: Float = {
         let mut array = [0. ; MAX_VECTOR_WIDTH];
-        let mut i = 0;
+        let mut i = 1;
         while i < MAX_VECTOR_WIDTH {
             array[i] = 1.;
             i += 2;
@@ -193,9 +193,9 @@ impl WaveTableOscVoice {
 
         let mut voice_samples = self.center_osc.advance_and_resample_select(table, self.mask);
 
-        self.detuned_oscs.iter_mut().for_each(
-            |osc| voice_samples += osc.advance_and_resample(table)
-        );
+        self.detuned_oscillators()
+            .iter_mut()
+            .for_each(|osc| voice_samples += osc.advance_and_resample(table));
 
         sum_to_stereo_sample(voice_samples)
     }
@@ -240,21 +240,24 @@ pub fn flip_pairs(v: Float) -> Float {
 
 pub struct WTOscVoice {
 
+    params: Arc<WTOscParams>,
     table: LenderReciever<BandLimitedWaveTables>,
     normalize: Float,
     voices: ArrayVec<WaveTableOscVoice, VOICES_PER_VECTOR>,
     normal_weights: LinearSmoother<MAX_VECTOR_WIDTH>,
     flipped_weights: LinearSmoother<MAX_VECTOR_WIDTH>,
+    sr: f32,
 }
 
 impl WTOscVoice {
 
-    pub fn from_table_lender(table: LenderReciever<BandLimitedWaveTables>) -> Self {
+    pub fn new(table: LenderReciever<BandLimitedWaveTables>, params: Arc<WTOscParams>) -> Self {
 
         Self {
-
+            params,
             voices: Default::default(),
             normalize: Simd::splat(1.),
+            sr: 44100.,
             normal_weights: Default::default(),
             flipped_weights: Default::default(),
             table
@@ -290,24 +293,32 @@ impl WTOscVoice {
         self.voices.iter_mut().for_each(WaveTableOscVoice::reset)
     }
 
-    pub fn add_voice(&mut self, note: u8, sr: f32) {
+    pub fn add_voice(&mut self, note: u8) {
 
-        self.voices.push(
-            WaveTableOscVoice::from_normalized_frequency(
-                util::midi_note_to_freq(note) / sr
-            )
-        )
+        let mut voice = WaveTableOscVoice::from_normalized_frequency(
+            util::midi_note_to_freq(note) / self.sr
+        );
+
+        voice.randomize_phases();
+
+        self.voices.push(voice);
     }
 
     pub fn remove_voice(&mut self, index: usize) {
         self.voices.swap_remove(index);
     }
 
-    pub fn update_smoothers(&mut self, params: &WTOscParams, block_len: usize) {
+    pub fn set_sample_rate(&mut self, sr: f32) {
+        self.sr = sr
+    }
+
+    pub fn update_smoothers(&mut self, block_len: usize) {
+
+        let params = self.params.as_ref();
 
         self.table.update_item();
         
-        let detune = Simd::splat(params.detune.unmodulated_plain_value()) * Simd::splat(params.detune_range.unmodulated_normalized_value());
+        let detune = Simd::splat(params.detune.unmodulated_plain_value()) * Simd::splat(params.detune_range.unmodulated_plain_value());
 
         let transpose = Simd::splat(params.transpose.unmodulated_plain_value());
 
@@ -321,7 +332,7 @@ impl WTOscVoice {
         self.normalize = ONE_F / Simd::splat(n as f32).sqrt();
         
         let remainder = (n - 1) % MAX_VECTOR_WIDTH + 1;
-        let num_full_vectors = (n - 1) / MAX_VECTOR_WIDTH;
+        let num_full_vectors = enclosing_div(n, MAX_VECTOR_WIDTH);
 
         let remainder_mask = TMask::from_array(array::from_fn(|i| i < remainder));
 
