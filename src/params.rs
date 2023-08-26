@@ -1,12 +1,12 @@
-use std::sync::{Mutex, Arc};
+use std::{sync::{Mutex, Arc, atomic::{AtomicBool, Ordering}}, f32::EPSILON};
 
 use atomic_refcell::AtomicRefCell;
 
 use nih_plug::{prelude::*, formatters::*};
 
-use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::{MAX_UNISON, WTOscVoice}};
+use crate::dsp::{wavetable::{SharedLender, BandLimitedWaveTables}, wt_osc::voice::MAX_UNISON};
 
-const WAVETABLE_FOLDER_PATH: &str = "C:\\Users\\Mohammad\\Documents\\coding\\Krynth\\wavetables";
+const WAVETABLE_FOLDER_PATH: &str = include_str!("../wavetable_folder_path.txt");
 
 #[derive(Params)]
 pub struct WTOscParams {
@@ -32,6 +32,7 @@ pub struct WTOscParams {
     pub random: FloatParam,
     #[persist = "wtname"]
     pub wt_name: AtomicRefCell<Box<str>>,
+    wt_needs_reload: AtomicBool,
     pub wavetable: Mutex<SharedLender<BandLimitedWaveTables>>,
 }
 
@@ -56,7 +57,7 @@ impl Default for WTOscParams {
                 0.5,
                 FloatRange::Linear {
                     min: f32::EPSILON,
-                    max: 1.,
+                    max: 1. - f32::EPSILON,
                 }
             ).with_value_to_string(Arc::new( |value| {
                 let v = value.mul_add(2., -1.);
@@ -100,7 +101,7 @@ impl Default for WTOscParams {
                 "Unison Stereo Amount",
                 1.,
                 FloatRange::Linear {
-                    min: 0.,
+                    min: EPSILON,
                     max: 1. - f32::EPSILON,
                 }
             ).with_value_to_string(v2s_f32_percentage(3))
@@ -137,6 +138,8 @@ impl Default for WTOscParams {
 
             wt_name: AtomicRefCell::new("Basic Shapes".into()),
 
+            wt_needs_reload: AtomicBool::new(true),
+
             wavetable: Default::default(),
         }
     }
@@ -145,22 +148,22 @@ impl Default for WTOscParams {
 impl WTOscParams {
 
     pub fn load_wavetable(&self) {
-        let name = self.wt_name.borrow();
-        let name = name.as_ref();
-        let wt = BandLimitedWaveTables::from_file(
-            format!("{WAVETABLE_FOLDER_PATH}\\{name}.WAV")
-        );
 
-        let mut lock = self.wavetable.lock().expect("Issue unlocking the lock");
+        // this is done in order to avoid needlessly doing that big allocation
+        if self.wt_needs_reload.load(Ordering::Acquire) {
+            let name = self.wt_name.borrow();
+            let name = name.as_ref();
 
-        lock.add(wt);
-    }
+            let path = format!("{WAVETABLE_FOLDER_PATH}\\{name}.WAV");
 
-    pub fn create_processor(self: Arc<Self>) -> WTOscVoice {
-        let table = {
+            // this one right here
+            let wt = BandLimitedWaveTables::from_file(path);
+
             let mut lock = self.wavetable.lock().expect("Issue unlocking the lock");
-            lock.create_new_reciever()
-        };
-        WTOscVoice::new(table, self)
+
+            lock.add(wt);
+
+            self.wt_needs_reload.store(false, Ordering::Release)
+        }
     }
 }

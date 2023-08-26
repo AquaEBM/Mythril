@@ -1,12 +1,11 @@
-#![feature(portable_simd, stdsimd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit, const_float_bits_conv)]
+#![feature(portable_simd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit, const_float_bits_conv)]
 
 use std::{sync::Arc, num::NonZeroU32};
 
 use arrayvec::ArrayVec;
-use dsp::wt_osc::WTOscVoice;
-use plugin_util::simd_util::{sum_to_stereo_sample, MAX_VECTOR_WIDTH, enclosing_div};
-use nih_plug::prelude::*;
-use params::WTOscParams;
+use dsp::wt_osc::WTOsc;
+use plugin_util::simd_util::{MAX_VECTOR_WIDTH, enclosing_div};
+use nih_plug::{prelude::*, buffer::SamplesIter};
 
 pub mod dsp;
 mod params;
@@ -17,32 +16,85 @@ pub const VOICES_PER_VECTOR: usize = MAX_VECTOR_WIDTH / 2;
 
 #[derive(Default)]
 pub struct WaveTableOscillator {
-    params: Arc<WTOscParams>,
     voice_manager: ArrayVec<ArrayVec<u8, VOICES_PER_VECTOR>, NUM_VECTORS>,
-    oscillators: ArrayVec<WTOscVoice, NUM_VECTORS>,
-    sr: f32,
+    processor: WTOsc,
 }
 
 impl WaveTableOscillator {
-    pub fn add_voice(&mut self, note: u8) {
 
-        if let Some((oscs, ids)) = self.oscillators
+    fn add_voice(&mut self, note: u8) {
+
+        let vm = &mut self.voice_manager;
+        let num_clusters = vm.len();
+
+        if let Some(ids) = vm
             .iter_mut()
-            .zip(self.voice_manager.iter_mut())
-            .find(|(_, ids)| !ids.is_full())
+            .find(|ids| !ids.is_full())
         {
-            oscs.add_voice(note);
+            self.processor.push_voice(note, num_clusters - 1);
             ids.push(note);
 
-        } else if self.voice_manager.try_push(Default::default()).is_ok() {
+        } else if let Ok(_) = vm.try_push(Default::default()) {
 
-            let mut voices = self.params.clone().create_processor();
-            voices.set_sample_rate(self.sr);
-            voices.add_voice(note);
-            voices.update_smoothers(64);
-            self.oscillators.push(voices);
-            self.voice_manager.last_mut().unwrap().push(note)
+            self.processor.push_cluster();
+            self.processor.push_voice(note, num_clusters);
+
+            vm.last_mut().unwrap().push(note);
         };
+    }
+
+    fn handle_event(&mut self, event: NoteEvent<<Self as Plugin>::SysExMessage>) {
+
+        match event {
+
+            NoteEvent::NoteOff { note, .. } => {
+
+                'outer: for (i, ids) in self.voice_manager
+                    .iter_mut()
+                    .enumerate()
+                {
+                    for (j, id) in ids.iter().enumerate() {
+                        if &note == id {
+                            self.processor.remove_voice(i, j);
+                            ids.swap_remove(j);
+                            break 'outer;
+                        }
+                    }
+
+                    if ids.is_empty() {
+                        self.voice_manager.swap_remove(i);
+                        break;
+                    }
+                }
+            },
+
+            NoteEvent::NoteOn { note, .. } => {
+
+                self.add_voice(note);
+            },
+
+            _ => (),
+        }
+    }
+
+    fn process(&mut self, samples: &mut SamplesIter, take: usize) {
+
+        if take != 0 {
+            self.processor.param_values.advance_n(take as u32);
+
+            self.processor.update_smoothers(take);
+        }
+
+        for mut frame in samples.take(take) {
+
+            let output = self.processor.process_all();
+
+            // SAFETY: the only layout we support is stereo
+            unsafe { 
+                *frame.get_unchecked_mut(0) = output[0];
+                *frame.get_unchecked_mut(1) = output[1];
+            }
+        }
     }
 }
 
@@ -65,7 +117,7 @@ impl Plugin for WaveTableOscillator {
         }
     ];
 
-    const MIDI_INPUT: MidiConfig = MidiConfig::MidiCCs;
+    const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
 
@@ -76,7 +128,7 @@ impl Plugin for WaveTableOscillator {
     type BackgroundTask = ();
 
     fn params(&self) -> Arc<dyn Params> {
-        self.params.clone()
+        self.processor.params()
     }
 
     fn initialize(
@@ -86,8 +138,7 @@ impl Plugin for WaveTableOscillator {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
 
-        self.params.load_wavetable();
-        self.sr = buffer_config.sample_rate;
+        self.processor.initialize(buffer_config.sample_rate);
         true
     }
 
@@ -98,65 +149,32 @@ impl Plugin for WaveTableOscillator {
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
 
-        let block_len = buffer.samples().max(32);
+        let block_len = buffer.samples();
+        self.processor.update_param_smoothers(block_len.max(32));
 
-        self.oscillators.iter_mut().for_each(|osc| osc.update_smoothers(block_len));
+        let mut current_sample = 0;
 
-        let mut next_event = context.next_event();
+        let mut samples_iter = buffer.iter_samples();
+        let samples_iter = samples_iter.by_ref();
 
-        for (i, mut frame) in buffer.iter_samples().enumerate() {
-            while let Some(event) = next_event {
+        while let Some(event) = context.next_event() {
 
-                if event.timing() > i as u32 { break; }
+            let timing = event.timing() as usize;
+            
+            self.process(samples_iter, timing - current_sample);
 
-                match event {
+            self.handle_event(event);
 
-                    NoteEvent::NoteOff { note, .. } => {
-
-                        'outer: for (ids, oscs) in self.voice_manager
-                            .iter_mut()
-                            .zip(self.oscillators.iter_mut())
-                        {
-                            for (i, id) in ids.iter().enumerate() {
-                                if &note == id {
-                                    oscs.remove_voice(i);
-                                    ids.swap_remove(i);
-                                    break 'outer;
-                                }
-                            }
-                        }
-                    },
-
-                    NoteEvent::NoteOn { note, .. } => {
-
-                        self.add_voice(note);
-                    },
-
-                    _ => (),
-                }
-
-                next_event = context.next_event();
-            }
-
-            let output = sum_to_stereo_sample(self.oscillators
-                .iter_mut()
-                .map(WTOscVoice::process)
-                .sum()
-            );
-
-            // SAFETY: the only layout we support is stereo
-            unsafe { 
-                *frame.get_unchecked_mut(0) = output[0];
-                *frame.get_unchecked_mut(1) = output[1];
-            }
+            current_sample = timing;
         }
+
+        self.process(samples_iter, block_len - current_sample);
 
         ProcessStatus::Normal
     }
 
     fn reset(&mut self) {
-        self.oscillators.clear();
-        self.voice_manager.clear();
+        self.processor.reset()
     }
 }
 
@@ -185,5 +203,5 @@ impl Vst3Plugin for WaveTableOscillator {
     ];
 }
 
-nih_export_clap!(WaveTableOscillator);
+// nih_export_clap!(WaveTableOscillator);
 nih_export_vst3!(WaveTableOscillator);

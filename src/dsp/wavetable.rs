@@ -35,7 +35,7 @@ const ONE: UInt = const_splat(1);
 impl BandLimitedWaveTables {
 
     /// How many octaves of frequency content our wavetables have, this
-    /// is also the base two logarithm of the number of samples in each frame
+    /// is also the base 2 logarithm of the number of samples in each frame
     const NUM_OCTAVES: usize = 11;
     const V_NUM_OCTAVES: UInt = const_splat(Self::NUM_OCTAVES as u32);
     /// fractional part bits
@@ -74,7 +74,7 @@ impl BandLimitedWaveTables {
 
         let fract = fxp_to_flp(phase << Self::V_NUM_OCTAVES);
 
-        let table_start = (octaves + frame * Self::NUM_MIPMAPS) << Self::V_NUM_OCTAVES;
+        let table_start = octaves + frame * Self::NUM_MIPMAPS << Self::V_NUM_OCTAVES;
 
         let phase_a = phase >> Self::FRACT_BITS;
         let phase_b = phase_a + ONE & Self::PHASE_MASK;
@@ -206,7 +206,7 @@ impl<T: ?Sized> SharedLender<T> {
 
     pub fn create_new_reciever(&mut self) -> LenderReciever<T> {
 
-        let value = self.drop_queue.first().expect("no value to give to lender").clone();
+        let value = self.drop_queue.first().map(Arc::clone);
 
         let (producer, reciever) = RingBuffer::new(128);
         self.ring_buffers.push(producer);
@@ -219,7 +219,7 @@ impl<T: ?Sized> SharedLender<T> {
 }
 
 pub struct LenderReciever<T: ?Sized> {
-    current: Arc<T>,
+    current: Option<Arc<T>>,
     ring_buffer: Consumer<Arc<T>>,
 }
 
@@ -228,15 +228,11 @@ impl<T: ?Sized> LenderReciever<T> {
     pub fn update_item(&mut self) {
         while let Ok(item) = self.ring_buffer.pop() {
             debug_assert!(Arc::strong_count(&item) > 1);
-            self.current = item;
+            self.current = Some(item);
         }
     }
-}
 
-impl<T: ?Sized> Deref for LenderReciever<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        self.current.as_ref()
+    pub unsafe fn current(&self) -> &T {
+        self.current.as_deref().unwrap_unchecked()
     }
 }
