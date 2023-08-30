@@ -52,7 +52,6 @@ static UNISON_DETUNES: [[Float ; NUM_UNISON_VECTORS] ; MAX_UNISON + 1] = {
     unsafe { transmute(blocks) }
 };
 
-
 #[derive(Default)]
 pub struct WTOscVoice {
     center_osc: Oscillator,

@@ -27,19 +27,22 @@ impl WaveTableOscillator {
         let vm = &mut self.voice_manager;
         let num_clusters = vm.len();
 
-        if let Some(ids) = vm
+        if let Some((cluster_idx, ids)) = vm
             .iter_mut()
-            .find(|ids| !ids.is_full())
+            .enumerate()
+            .find(|(_, ids)| !ids.is_full())
         {
-            self.processor.push_voice(note, num_clusters - 1);
+            self.processor.push_voice(note, cluster_idx);
             ids.push(note);
 
-        } else if let Ok(_) = vm.try_push(Default::default()) {
+        } else if !vm.is_full() {
 
             self.processor.push_cluster();
             self.processor.push_voice(note, num_clusters);
 
-            vm.last_mut().unwrap().push(note);
+            let mut cluster_ids = ArrayVec::default();
+            cluster_ids.push(note);
+            vm.push(cluster_ids);
         };
     }
 
@@ -54,16 +57,20 @@ impl WaveTableOscillator {
                     .enumerate()
                 {
                     for (j, id) in ids.iter().enumerate() {
+
                         if &note == id {
+
                             self.processor.remove_voice(i, j);
-                            ids.swap_remove(j);
+                            ids.swap_pop(j);
+
+                            if ids.is_empty() {
+
+                                self.processor.remove_cluster(i);
+                                self.voice_manager.swap_pop(i);
+                            }
+
                             break 'outer;
                         }
-                    }
-
-                    if ids.is_empty() {
-                        self.voice_manager.swap_remove(i);
-                        break;
                     }
                 }
             },
@@ -111,7 +118,7 @@ impl Plugin for WaveTableOscillator {
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         AudioIOLayout {
-            main_input_channels: NonZeroU32::new(0),
+            main_input_channels: None,
             main_output_channels: NonZeroU32::new(2),
             ..AudioIOLayout::const_default()
         }

@@ -110,6 +110,10 @@ impl WTOsc {
         self.clusters.get_mut(cluster_idx).and_then(|cluster| cluster.remove_voice(voice_idx));
     }
 
+    pub fn remove_cluster(&mut self, cluster_idx: usize) {
+        self.clusters.swap_pop(cluster_idx);
+    }
+
     pub fn push_cluster(&mut self) {
 
         (!self.clusters.is_full()).then(|| {

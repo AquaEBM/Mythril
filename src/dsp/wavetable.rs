@@ -1,19 +1,13 @@
 use hound::{SampleFormat, WavReader};
 use realfft::{RealFftPlanner, num_complex::Complex32};
 use rtrb::{Producer, Consumer, RingBuffer};
-use std::{sync::Arc, path::Path, ops::{Deref, DerefMut, Index}};
+use std::{sync::Arc, path::Path, ops::{Deref, DerefMut, Index}, mem};
 
 use super::*;
 
 #[repr(transparent)]
 pub struct BandLimitedWaveTables {
-    data: [f32 ; Self::TOTAL_LEN]
-}
-
-impl Default for BandLimitedWaveTables {
-    fn default() -> Self {
-        Self { data: [0. ; Self::TOTAL_LEN] }
-    }
+    data: [f32]
 }
 
 impl Deref for BandLimitedWaveTables {
@@ -94,9 +88,11 @@ impl BandLimitedWaveTables {
         assert!(reader.len() == (Self::NUM_FRAMES << Self::NUM_OCTAVES) as u32);
         assert!(reader.spec().sample_format == SampleFormat::Float);
 
-        // required in order to avoid a stack overflow in debug builds
-        // SAFETY: zero (0.0) is a valid f32 value
-        let mut table = unsafe { Arc::<Self>::new_zeroed().assume_init() };
+        let mut table = unsafe {
+            mem::transmute::<Arc<[f32]>, Arc<Self>>(
+                Arc::new_zeroed_slice(Self::TOTAL_LEN).assume_init()
+            )
+        };
 
         let table_mut = Arc::get_mut(&mut table).unwrap();
 
