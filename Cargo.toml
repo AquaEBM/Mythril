@@ -1,15 +1,15 @@
 [package]
-name = "synth"
+name = "krynth"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "synth"
+name = "krynth"
 path = "src/lib.rs"
 crate-type = ["cdylib","lib"]
 
 [[bin]]
-name = "synth_standalone"
+name = "krynth_standalone"
 path = "src/main.rs"
 
 [dependencies]

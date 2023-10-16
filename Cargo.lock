@@ -777,6 +777,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "krynth"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "atomic_float",
+ "atomic_refcell",
+ "cfg-if",
+ "hound",
+ "nih_plug",
+ "plugin_util",
+ "rand",
+ "realfft",
+ "rtrb",
+ "serde",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1479,23 +1496,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
-]
-
-[[package]]
-name = "synth"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "atomic_float",
- "atomic_refcell",
- "cfg-if",
- "hound",
- "nih_plug",
- "plugin_util",
- "rand",
- "realfft",
- "rtrb",
- "serde",
 ]
 
 [[package]]

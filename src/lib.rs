@@ -86,11 +86,11 @@ impl WaveTableOscillator {
 
     fn process(&mut self, samples: &mut SamplesIter, take: usize) {
 
-        if take != 0 {
-            self.processor.param_values.advance_n(take as u32);
+        if take == 0 { return }
 
-            self.processor.update_smoothers(take);
-        }
+        self.processor.param_values.advance_n(take as u32);
+
+        self.processor.update_smoothers(take);
 
         for mut frame in samples.take(take) {
 
