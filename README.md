@@ -14,7 +14,7 @@ Then run the following commands in your terminal:
 
 ```
 git clone https://github.com/AquaEBM/Jade.git
-cd Krynth
+cd Jade
 cargo +nightly nih-plug bundle jade --release
 ```
 
