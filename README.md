@@ -18,4 +18,4 @@ cd Krynth
 cargo +nightly nih-plug bundle jade --release
 ```
 
-From here, you can either copy (or symlink) the just created .vst3 or .clap bundle (found somewhere in "target/release/bundled") into your system's VST3 or CLAP (if your DAW supports it) plugin folders, or add the folder containing it to the list of path's for your DAW to scan for when looking for plugins (don't for get to rescan plugin paths)
+From here, you can either copy (or symlink) the just created .vst3 or .clap bundle (found somewhere in "target/release/bundled") into your system's VST3 or CLAP (if your DAW supports it) plugin folders, or add the folder containing it to the list of path's for your DAW to scan for when looking for plugins (don't forget to rescan plugin paths)
