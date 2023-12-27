@@ -1,15 +1,15 @@
 [package]
-name = "krynth"
+name = "jade"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "krynth"
+name = "jade"
 path = "src/lib.rs"
 crate-type = ["cdylib","lib"]
 
 [[bin]]
-name = "krynth_standalone"
+name = "jade_standalone"
 path = "src/main.rs"
 
 [dependencies]

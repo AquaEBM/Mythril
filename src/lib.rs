@@ -90,15 +90,15 @@ impl WaveTableOscillator {
 }
 
 impl Plugin for WaveTableOscillator {
-    const NAME: &'static str = "Wavetable Oscillator";
+    const NAME: &'static str = "Jade";
 
     const VENDOR: &'static str = "AquaEBM";
 
-    const URL: &'static str = "banananaaaa.com";
+    const URL: &'static str = "https://github.com/AquaEBM";
 
-    const EMAIL: &'static str = "monke@gmail.com";
+    const EMAIL: &'static str = "AquaEBM@gmail.com";
 
-    const VERSION: &'static str = "0.6.9";
+    const VERSION: &'static str = "0.0.1";
 
     const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
         AudioIOLayout {

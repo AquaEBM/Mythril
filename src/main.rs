@@ -1,5 +1,5 @@
 use nih_plug::prelude::*;
-use krynth::*;
+use jade::*;
 
 fn main() {
     nih_export_standalone::<WaveTableOscillator>();
