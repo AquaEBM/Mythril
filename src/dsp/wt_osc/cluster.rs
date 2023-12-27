@@ -1,23 +1,23 @@
 use super::*;
-use arrayvec::ArrayVec;
 use voice::WTOscVoice;
-use util::{triangular_pan_weights, swap_stereo};
 
 #[derive(Default)]
 pub struct WTOscVoiceCluster {
-    voices: ArrayVec<WTOscVoice, VOICES_PER_VECTOR>,
+    active_voices_mask: u64,
+    voices: [WTOscVoice ; STEREO_VOICES_PER_VECTOR],
     normal_weights: LinearSmoother,
     flipped_weights: LinearSmoother,
 }
 
 impl WTOscVoiceCluster {
 
-    fn get_sample_weights(param_values: &WTOscParamValues, cluster_idx: usize) -> (Float, Float) {
-        let level = param_values.level.get_current() * param_values.num_unison_voices.cast().recip().sqrt();
+    fn get_sample_weights(param_values: &WTOscParamValues, _cluster_idx: usize) -> (Float, Float) {
+        let level = param_values.level.get_current();
         let stereo = param_values.stereo.get_current();
 
         let pan = param_values.pan.get_current();
-        let pan_weights = triangular_pan_weights(pan);
+        let unison_normalisation = param_values.num_unison_voices.cast::<f32>().recip();
+        let pan_weights = triangular_pan_weights(pan) * unison_normalisation;
 
         (
             pan_weights.mul_add(stereo, pan_weights).sqrt() * level,
@@ -25,19 +25,18 @@ impl WTOscVoiceCluster {
         )
     }
 
-    pub fn from_param_values(param_values: &WTOscParamValues, cluster_idx: usize) -> Self {
-
-        let mut output = Self::default();
-
+    pub fn set_params_instantly(
+        &mut self,
+        param_values: &WTOscParamValues,
+        cluster_idx: usize
+    ) {
         let (normal_weights, flipped_weights) = Self::get_sample_weights(param_values, cluster_idx);
 
-        output.normal_weights.set_instantly(normal_weights);
-        output.flipped_weights.set_instantly(flipped_weights);
-
-        output
+        self.normal_weights.set_instantly(normal_weights);
+        self.flipped_weights.set_instantly(flipped_weights);
     }
 
-    pub fn update_smoothers(
+    pub fn set_params_smoothed(
         &mut self,
         param_values: &WTOscParamValues,
         cluster_idx: usize,
@@ -51,48 +50,69 @@ impl WTOscVoiceCluster {
         self.voices
             .iter_mut()
             .enumerate()
-            .for_each(|(i, voice)| voice.update_smoothers(param_values, cluster_idx, i, num_samples));
+            .for_each(|(i, voice)| voice.set_params_smoothed(param_values, cluster_idx, i, num_samples));
     }
-
+    
+    #[inline]
     pub fn process(&mut self, table: &BandLimitedWaveTables) -> Float {
 
         let mut output = Simd::splat(0.);
 
-        self.voices.iter_mut()
-            .zip(as_mut_stereo_sample_array(&mut output))
-            .for_each(|(voice, sample)| *sample = voice.process(table));
+        let mut active = self.active_voices_mask;
+        let output_samples = as_mut_stereo_sample_array(&mut output);
+        let mut output_samples_iter = output_samples.iter_mut().zip(&mut self.voices);
+
+        while active != 0 {
+
+            let n = active.trailing_zeros() as usize;
+            
+            let (sample, voice) = unsafe { output_samples_iter.nth(n).unwrap_unchecked() };
+            
+            *sample = voice.process(table);
+            active >>= n + 1;
+        }
 
         let flipped = swap_stereo(output);
 
         self.normal_weights.tick();
         self.flipped_weights.tick();
 
-        self.normal_weights.get_current() * output + self.flipped_weights.get_current() * flipped
+        output = self.normal_weights.get_current() * output + self.flipped_weights.get_current() * flipped;
+
+        output
     }
 
     pub fn reset(&mut self) {
         self.voices.iter_mut().for_each(WTOscVoice::reset)
     }
 
-    pub fn push_voice(
+    pub fn activate_voice(
         &mut self,
         param_values: &WTOscParamValues,
         cluster_idx: usize,
+        voice_idx: usize,
         note: u8
-    ) -> Option<()> {
-        (!self.voices.is_full()).then(|| {
-
-            let voice = WTOscVoice::from_param_values(
-                param_values,
-                note,
-                cluster_idx,
-                self.voices.len()
-            );
-            self.voices.push(voice);
-        })
+    ) -> bool {
+        if let Some(voice) = self.voices.get_mut(voice_idx) {
+            voice.activate(param_values, cluster_idx, voice_idx, note);
+            self.active_voices_mask |= 1 << voice_idx;
+            return true;
+        }
+        false
     }
 
-    pub fn remove_voice(&mut self, index: usize) -> Option<()> {
-        self.voices.swap_pop(index).and(Some(()))
+    pub fn deactivate_voice(&mut self, index: usize) -> bool {
+        if let Some(voice) = self.voices.get_mut(index) {
+            voice.deactivate();
+            self.active_voices_mask &= !(1 << index);
+            return true;
+        }
+        false
     }
+
+    pub fn activate(&mut self, param_values: &WTOscParamValues, index: usize) {
+        self.set_params_instantly(param_values, index);
+    }
+
+    pub fn deactivate(&mut self) {}
 }

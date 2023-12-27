@@ -1,5 +1,4 @@
 use super::*;
-use util::semitones_to_ratio;
 
 #[derive(Default, Clone, Copy)]
 pub struct Oscillator {
@@ -7,36 +6,32 @@ pub struct Oscillator {
     pub base_phase_delta: Float,
     phase_delta: LogSmoother,
     phase: UInt,
-    old_frame: UInt,
-    new_frame: UInt,
+    frame: UInt,
 }
 
 impl Oscillator {
 
+    #[inline]
     pub fn advance_phase(&mut self) -> UInt {
 
         let phase_delta_fixed_point = flp_to_fxp(self.phase_delta.get_current());
 
-        self.phase += phase_delta_fixed_point;
+        self.set_phase(self.phase + phase_delta_fixed_point);
 
         phase_delta_fixed_point
     }
 
-    pub fn randomize_phase(&mut self, randomisation: Float) {
-
-        let mut phase = Simd::splat(0.);
-
-        as_mut_stereo_sample_array(&mut phase)
-            .iter_mut()
-            .for_each(|sample| *sample = Simd::splat(rand::random()));
-
-        self.phase = flp_to_fxp(phase * randomisation);
+    #[inline]
+    pub fn set_phase(&mut self, phase: UInt) {
+        self.phase = phase;
     }
 
+    #[inline]
     pub fn update_phase_delta_smoother(&mut self) {
         self.phase_delta.tick()
     }
 
+    #[inline]
     pub fn reset_phase(&mut self) {
         self.phase = Simd::splat(0);
     }
@@ -51,24 +46,24 @@ impl Oscillator {
     }
 
     pub fn set_frame_for_smoothing(&mut self, frame: UInt) {
-        self.old_frame = self.new_frame;
-        self.new_frame = frame;
+        self.frame = frame;
     }
 
     pub fn set_frame(&mut self, frame: UInt) {
-        self.old_frame = frame;
-        self.new_frame = frame;
+        self.frame = frame;
     }
 
-    pub fn advance_and_resample_select(&mut self, table: &BandLimitedWaveTables, mask: TMask) -> Float {
+    #[inline]
+    pub fn advance_and_resample_select(&mut self, table: &BandLimitedWaveTables, mask: Mask) -> Float {
         self.update_phase_delta_smoother();
         let phase_delta = self.advance_phase();
-        table.resample_select(phase_delta, self.new_frame, self.phase, mask)
+        table.resample_select(phase_delta, self.frame, self.phase, mask)
     }
 
+    #[inline]
     pub fn advance_and_resample(&mut self, table: &BandLimitedWaveTables) -> Float {
         self.update_phase_delta_smoother();
         let phase_delta = self.advance_phase();
-        table.resample(phase_delta, self.new_frame, self.phase)
+        table.resample(phase_delta, self.frame, self.phase)
     }
 }

@@ -1,83 +1,63 @@
 #![feature(portable_simd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit, const_float_bits_conv)]
 
+use core::cell::Cell;
 use std::{sync::Arc, num::NonZeroU32};
 
-use arrayvec::ArrayVec;
-use dsp::wt_osc::WTOsc;
-use plugin_util::simd_util::{MAX_VECTOR_WIDTH, enclosing_div};
+use dsp::{wt_osc::WTOsc, SharedLender, sum_to_stereo_sample};
+use plugin_util::simd_util::{FLOATS_PER_VECTOR, enclosing_div, Float} ;
 use nih_plug::{prelude::*, buffer::SamplesIter};
 
 pub mod dsp;
 mod params;
+mod voice_manager;
+use voice_manager::VoiceManager;
 
 pub const MAX_POLYPHONY: usize = 128;
+pub const VOICES_PER_VECTOR: usize = FLOATS_PER_VECTOR / 2;
 pub const NUM_VECTORS: usize = enclosing_div(MAX_POLYPHONY, VOICES_PER_VECTOR);
-pub const VOICES_PER_VECTOR: usize = MAX_VECTOR_WIDTH / 2;
 
-#[derive(Default)]
 pub struct WaveTableOscillator {
-    voice_manager: ArrayVec<ArrayVec<u8, VOICES_PER_VECTOR>, NUM_VECTORS>,
+    vm: VoiceManager<VOICES_PER_VECTOR, NUM_VECTORS>,
     processor: WTOsc,
+    buffer: Box<[Cell<Float>]>
+}
+
+impl Default for WaveTableOscillator {
+    fn default() -> Self {
+        let mut sender = SharedLender::default();
+        Self {
+            vm: Default::default(),
+            processor: WTOsc::new(
+                Default::default(),
+                sender.create_new_reciever()
+            ),
+            buffer: Box::new([])
+        }
+    }
 }
 
 impl WaveTableOscillator {
-
-    fn add_voice(&mut self, note: u8) {
-
-        let vm = &mut self.voice_manager;
-        let num_clusters = vm.len();
-
-        if let Some((cluster_idx, ids)) = vm
-            .iter_mut()
-            .enumerate()
-            .find(|(_, ids)| !ids.is_full())
-        {
-            self.processor.push_voice(note, cluster_idx);
-            ids.push(note);
-
-        } else if !vm.is_full() {
-
-            self.processor.push_cluster();
-            self.processor.push_voice(note, num_clusters);
-
-            let mut cluster_ids = ArrayVec::default();
-            cluster_ids.push(note);
-            vm.push(cluster_ids);
-        };
-    }
 
     fn handle_event(&mut self, event: NoteEvent<<Self as Plugin>::SysExMessage>) {
 
         match event {
 
             NoteEvent::NoteOff { note, .. } => {
-
-                'outer: for (i, ids) in self.voice_manager
-                    .iter_mut()
-                    .enumerate()
-                {
-                    for (j, id) in ids.iter().enumerate() {
-
-                        if &note == id {
-
-                            self.processor.remove_voice(i, j);
-                            ids.swap_pop(j);
-
-                            if ids.is_empty() {
-
-                                self.processor.remove_cluster(i);
-                                self.voice_manager.swap_pop(i);
-                            }
-
-                            break 'outer;
-                        }
+                if let Some((i, j)) = self.vm.remove_voice(note) {
+                    self.processor.deactivate_voice(i, j);
+                    if self.vm.num_voices_in_cluster(i) == 0 {
+                        self.processor.deactivate_cluster(i);
                     }
                 }
             },
 
             NoteEvent::NoteOn { note, .. } => {
-
-                self.add_voice(note);
+                if let Some((i, j)) = self.vm.add_voice(note) {
+                    if self.vm.num_voices_in_cluster(i) == 1 {
+                        self.processor.activate_cluster(i);
+                    }
+                    self.processor.activate_voice(i, j, note);
+                }
             },
 
             _ => (),
@@ -88,18 +68,22 @@ impl WaveTableOscillator {
 
         if take == 0 { return }
 
-        self.processor.param_values.advance_n(take as u32);
-
         self.processor.update_smoothers(take);
 
-        for mut frame in samples.take(take) {
+        let active_cluster_idxs = self.vm.active_clusters();
 
-            let output = self.processor.process_all();
+        let buffer = unsafe { self.buffer.get_unchecked(..take) };
 
-            // SAFETY: the only layout we support is stereo
-            unsafe { 
-                *frame.get_unchecked_mut(0) = output[0];
-                *frame.get_unchecked_mut(1) = output[1];
+        if self.processor.process_buffer(active_cluster_idxs, buffer) {
+            for (mut frame, samples) in samples.zip(buffer) {
+
+                let output = sum_to_stereo_sample(samples.get());
+    
+                // SAFETY: the only layout we support is stereo
+                unsafe { 
+                    *frame.get_unchecked_mut(0) = output[0];
+                    *frame.get_unchecked_mut(1) = output[1];
+                }
             }
         }
     }
@@ -146,9 +130,13 @@ impl Plugin for WaveTableOscillator {
     ) -> bool {
 
         self.processor.initialize(buffer_config.sample_rate);
+        let buffer = Box::new_zeroed_slice(buffer_config.max_buffer_size as usize);
+
+        self.buffer = unsafe { buffer.assume_init() };
         true
     }
 
+    #[inline]
     fn process(
         &mut self,
         buffer: &mut Buffer,
@@ -157,7 +145,7 @@ impl Plugin for WaveTableOscillator {
     ) -> ProcessStatus {
 
         let block_len = buffer.samples();
-        self.processor.update_param_smoothers(block_len.max(32));
+        self.processor.update_param_smoothers(block_len.max(16));
 
         let mut current_sample = 0;
 
@@ -167,7 +155,7 @@ impl Plugin for WaveTableOscillator {
         while let Some(event) = context.next_event() {
 
             let timing = event.timing() as usize;
-            
+
             self.process(samples_iter, timing - current_sample);
 
             self.handle_event(event);
@@ -210,5 +198,5 @@ impl Vst3Plugin for WaveTableOscillator {
     ];
 }
 
-// nih_export_clap!(WaveTableOscillator);
+nih_export_clap!(WaveTableOscillator);
 nih_export_vst3!(WaveTableOscillator);
