@@ -1,47 +1,40 @@
-#![feature(portable_simd, const_fn_floating_point_arithmetic, const_slice_index, new_uninit, const_float_bits_conv)]
+#![feature(
+    portable_simd,
+    const_fn_floating_point_arithmetic,
+    const_slice_index,
+    new_uninit,
+    const_float_bits_conv,
+    array_chunks,
+    float_next_up_down
+)]
 
-use core::cell::Cell;
-use std::{sync::Arc, num::NonZeroU32};
+extern crate alloc;
 
-use dsp::{wt_osc::WTOsc, SharedLender, sum_to_stereo_sample};
-use plugin_util::simd_util::{FLOATS_PER_VECTOR, enclosing_div, Float} ;
-use nih_plug::{prelude::*, buffer::SamplesIter};
-
-pub mod dsp;
 mod params;
-mod voice_manager;
-use voice_manager::VoiceManager;
+use alloc::sync::Arc;
+
+use core::{cell::Cell, num::NonZeroUsize, num::NonZeroU32};
+use wt_osc::WTOsc;
+use crate::params::JadeParamValues;
+use nih_plug::{buffer::SamplesIter, prelude::*};
+use plugin_util::{simd_util::{enclosing_div, Float, FLOATS_PER_VECTOR, sum_to_stereo_sample}, simd::Simd};
+
+use polygraph::VoiceManager;
 
 pub const MAX_POLYPHONY: usize = 128;
 pub const VOICES_PER_VECTOR: usize = FLOATS_PER_VECTOR / 2;
 pub const NUM_VECTORS: usize = enclosing_div(MAX_POLYPHONY, VOICES_PER_VECTOR);
 
+#[derive(Default)]
 pub struct WaveTableOscillator {
     vm: VoiceManager<VOICES_PER_VECTOR, NUM_VECTORS>,
-    processor: WTOsc,
-    buffer: Box<[Cell<Float>]>
-}
-
-impl Default for WaveTableOscillator {
-    fn default() -> Self {
-        let mut sender = SharedLender::default();
-        Self {
-            vm: Default::default(),
-            processor: WTOsc::new(
-                Default::default(),
-                sender.create_new_reciever()
-            ),
-            buffer: Box::new([])
-        }
-    }
+    processor: WTOsc<JadeParamValues>,
+    buffer: Box<[Cell<Float>]>,
 }
 
 impl WaveTableOscillator {
-
     fn handle_event(&mut self, event: NoteEvent<<Self as Plugin>::SysExMessage>) {
-
         match event {
-
             NoteEvent::NoteOff { note, .. } => {
                 if let Some((i, j)) = self.vm.remove_voice(note) {
                     self.processor.deactivate_voice(i, j);
@@ -49,7 +42,7 @@ impl WaveTableOscillator {
                         self.processor.deactivate_cluster(i);
                     }
                 }
-            },
+            }
 
             NoteEvent::NoteOn { note, .. } => {
                 if let Some((i, j)) = self.vm.add_voice(note) {
@@ -58,29 +51,26 @@ impl WaveTableOscillator {
                     }
                     self.processor.activate_voice(i, j, note);
                 }
-            },
+            }
 
             _ => (),
         }
     }
 
-    fn process(&mut self, samples: &mut SamplesIter, take: usize) {
-
-        if take == 0 { return }
-
-        self.processor.update_smoothers(take);
+    fn process(&mut self, samples: &mut SamplesIter, take: NonZeroUsize) {
+        let inc = Simd::splat(1. / take.get() as f32);
+        self.processor.update_smoothers(inc);
 
         let active_cluster_idxs = self.vm.active_clusters();
 
-        let buffer = unsafe { self.buffer.get_unchecked(..take) };
+        let buffer = unsafe { self.buffer.get_unchecked(..take.get()) };
 
         if self.processor.process_buffer(active_cluster_idxs, buffer) {
             for (mut frame, samples) in samples.zip(buffer) {
-
                 let output = sum_to_stereo_sample(samples.get());
-    
+
                 // SAFETY: the only layout we support is stereo
-                unsafe { 
+                unsafe {
                     *frame.get_unchecked_mut(0) = output[0];
                     *frame.get_unchecked_mut(1) = output[1];
                 }
@@ -100,13 +90,11 @@ impl Plugin for WaveTableOscillator {
 
     const VERSION: &'static str = "0.0.1";
 
-    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[
-        AudioIOLayout {
-            main_input_channels: None,
-            main_output_channels: NonZeroU32::new(2),
-            ..AudioIOLayout::const_default()
-        }
-    ];
+    const AUDIO_IO_LAYOUTS: &'static [AudioIOLayout] = &[AudioIOLayout {
+        main_input_channels: None,
+        main_output_channels: NonZeroU32::new(2),
+        ..AudioIOLayout::const_default()
+    }];
 
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
@@ -119,7 +107,7 @@ impl Plugin for WaveTableOscillator {
     type BackgroundTask = ();
 
     fn params(&self) -> Arc<dyn Params> {
-        self.processor.params()
+        self.processor.params().params().clone()
     }
 
     fn initialize(
@@ -129,7 +117,10 @@ impl Plugin for WaveTableOscillator {
         _context: &mut impl InitContext<Self>,
     ) -> bool {
 
-        self.processor.initialize(buffer_config.sample_rate);
+        self.processor.initialize(
+            buffer_config.sample_rate,
+            buffer_config.max_buffer_size as usize,
+        );
         let buffer = Box::new_zeroed_slice(buffer_config.max_buffer_size as usize);
 
         self.buffer = unsafe { buffer.assume_init() };
@@ -143,9 +134,10 @@ impl Plugin for WaveTableOscillator {
         _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
-
-        let block_len = buffer.samples();
-        self.processor.update_param_smoothers(block_len.max(16));
+        let Some(buffer_size) = NonZeroUsize::new(buffer.samples()) else {
+            return ProcessStatus::Normal;
+        };
+        self.processor.update_param_smoothers(buffer_size);
 
         let mut current_sample = 0;
 
@@ -153,17 +145,20 @@ impl Plugin for WaveTableOscillator {
         let samples_iter = samples_iter.by_ref();
 
         while let Some(event) = context.next_event() {
-
             let timing = event.timing() as usize;
 
-            self.process(samples_iter, timing - current_sample);
+            if let Some(block_len) = NonZeroUsize::new(timing - current_sample) {
+                self.process(samples_iter, block_len);
+            }
 
             self.handle_event(event);
 
             current_sample = timing;
         }
 
-        self.process(samples_iter, block_len - current_sample);
+        if let Some(last_block_len) = NonZeroUsize::new(buffer_size.get() - current_sample) {
+            self.process(samples_iter, last_block_len);
+        }
 
         ProcessStatus::Normal
     }
@@ -182,10 +177,7 @@ impl ClapPlugin for WaveTableOscillator {
 
     const CLAP_SUPPORT_URL: Option<&'static str> = None;
 
-    const CLAP_FEATURES: &'static [ClapFeature] = &[
-        ClapFeature::Instrument,
-        ClapFeature::Stereo
-    ];
+    const CLAP_FEATURES: &'static [ClapFeature] = &[ClapFeature::Instrument, ClapFeature::Stereo];
 }
 
 impl Vst3Plugin for WaveTableOscillator {

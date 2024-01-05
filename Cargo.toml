@@ -16,16 +16,14 @@ path = "src/main.rs"
 
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", features = ["standalone"]}
 plugin_util = { git = "https://github.com/AquaEBM/plugin_util.git", features = ["non_std_simd"] }
+wt_osc = { git = "https://github.com/AquaEBM/wt_osc.git" }
 
-arrayvec = "0.7"
 rand = "0.8"
 atomic_refcell = "0.1"
 atomic_float = "0.1"
 realfft = "3.2"
 hound = "3.5"
-rtrb = "0.2"
-cfg-if = "1.0"
-ittapi = { version = "0.4.0", optional = true }
+polygraph = { git = "https://github.com/AquaEBM/polygraph.git" }
 
 [features]
 
