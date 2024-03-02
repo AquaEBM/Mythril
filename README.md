@@ -2,17 +2,17 @@
 
 Bandlimited Wavetable Oscillator
 
-# Installaion
+## Installaion
 
 if you haven't already, install [Git](https://git-scm.com/downloads), then [Rust](https://www.rust-lang.org/tools/install), then install [nih-plug](https://github.com/robbert-vdh/nih-plug)'s plugin bundler using this command:
 
-```
+```shell
 cargo install --git https://github.com/robbert-vdh/nih-plug.git cargo-nih-plug
 ```
 
 Then run the following commands in your terminal:
 
-```
+```shell
 git clone https://github.com/AquaEBM/Mythril.git
 cd Mythril
 cargo +nightly nih-plug bundle mythril --release
