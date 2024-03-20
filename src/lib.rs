@@ -1,40 +1,31 @@
 #![feature(portable_simd, new_uninit)]
 
-mod params;
 extern crate alloc;
+mod params;
+
+use core::{cell::Cell, num::NonZeroUsize};
 
 use alloc::sync::Arc;
 use nih_plug::prelude::*;
-use params::MythrilParameters;
+use params::MythrilOscParams;
+
 use polygraph::{
-    buffer::OwnedBuffer,
-    processor::{new_vfloat_buffer, Processor},
-    simd_util::{enclosing_div, Float, STEREO_VOICES_PER_VECTOR},
+    simd_util::{enclosing_div, sum_to_stereo_sample, FLOATS_PER_VECTOR, STEREO_VOICES_PER_VECTOR},
+    standalone_processor::StandaloneProcessor,
+    voice::StackVoiceManager,
 };
 use wt_osc::WTOsc;
 
-pub const MAX_POLYPHONY: usize = 128;
-pub const MAX_NUM_CLUSTERS: usize = enclosing_div(MAX_POLYPHONY, STEREO_VOICES_PER_VECTOR);
+const MAX_POLYPHONY: usize = 128; // as many voices as there are midi notes
+const MAX_NUM_CLUSTERS: usize = enclosing_div(MAX_POLYPHONY, STEREO_VOICES_PER_VECTOR);
 
-pub struct Mythril {
-    buffer: OwnedBuffer<Float>,
-    processor: WTOsc,
-    params: Arc<MythrilParameters>,
+#[derive(Default)]
+pub struct MythrilOsc {
+    processor: StandaloneProcessor<WTOsc, StackVoiceManager<FLOATS_PER_VECTOR>>,
+    params: Arc<MythrilOscParams>,
 }
 
-impl Default for Mythril {
-    fn default() -> Self {
-        Self {
-            buffer: new_vfloat_buffer(0),
-            processor: Default::default(),
-            params: Default::default(),
-        }
-    }
-}
-
-impl Mythril {}
-
-impl Plugin for Mythril {
+impl Plugin for MythrilOsc {
     const MIDI_INPUT: MidiConfig = MidiConfig::Basic;
 
     const MIDI_OUTPUT: MidiConfig = MidiConfig::None;
@@ -43,7 +34,7 @@ impl Plugin for Mythril {
 
     const HARD_REALTIME_ONLY: bool = false;
 
-    const NAME: &'static str = "Mythril";
+    const NAME: &'static str = "MythrilOsc";
 
     const VENDOR: &'static str = "AquaEBM";
 
@@ -72,15 +63,60 @@ impl Plugin for Mythril {
     fn process(
         &mut self,
         buffer: &mut Buffer,
-        aux: &mut AuxiliaryBuffers,
+        _aux: &mut AuxiliaryBuffers,
         context: &mut impl ProcessContext<Self>,
     ) -> ProcessStatus {
+        let mut current_sample = 0;
+
+        let mut events_remain = true;
+
+        let proc = &mut self.processor;
+
+        let num_samples = buffer.samples();
+
+        while events_remain {
+            let event = context.next_event();
+            let timing = event.map(|e| e.timing() as usize).unwrap_or_else(|| {
+                events_remain = false;
+                num_samples
+            });
+
+            if let Some(num_samples) = NonZeroUsize::new(timing - current_sample) {
+                proc.process(current_sample, num_samples);
+                current_sample = timing;
+            }
+
+            if let Some(e) = event {
+                match e {
+                    NoteEvent::NoteOn { note, velocity, .. } => proc.note_on(note, velocity),
+                    NoteEvent::NoteOff { note, velocity, .. } => proc.note_off(note, velocity),
+                    NoteEvent::Choke { note, .. } => proc.note_free(note),
+                    _ => (),
+                }
+            }
+        }
+
+        if let Some(bufs) = proc.get_buffers() {
+            let buf = Cell::get_mut(bufs.first_mut().unwrap());
+
+            assert!(buf.len() >= num_samples);
+
+            for (mut output, &mut sample) in buffer.iter_samples().zip(buf) {
+                let [l, r] = sum_to_stereo_sample(sample).to_array();
+
+                unsafe {
+                    *output.get_unchecked_mut(0) = l;
+                    *output.get_unchecked_mut(1) = r;
+                }
+            }
+        }
+
         ProcessStatus::Normal
     }
 
     fn initialize(
         &mut self,
-        audio_io_layout: &AudioIOLayout,
+        _audio_io_layout: &AudioIOLayout,
         buffer_config: &BufferConfig,
         context: &mut impl InitContext<Self>,
     ) -> bool {
@@ -90,8 +126,39 @@ impl Plugin for Mythril {
             MAX_NUM_CLUSTERS,
         );
 
+        context.set_current_voice_capacity(MAX_POLYPHONY as u32);
+
         true
     }
 
     fn reset(&mut self) {}
 }
+
+impl Vst3Plugin for MythrilOsc {
+    const VST3_CLASS_ID: [u8; 16] = *b"mythrilsynth_osc";
+
+    const VST3_SUBCATEGORIES: &'static [Vst3SubCategory] = {
+        use Vst3SubCategory::*;
+
+        &[Instrument, Synth, Stereo]
+    };
+}
+
+impl ClapPlugin for MythrilOsc {
+    const CLAP_ID: &'static str = "com.AquaEBM.MythrilOsc";
+
+    const CLAP_DESCRIPTION: Option<&'static str> = None;
+
+    const CLAP_MANUAL_URL: Option<&'static str> = None;
+
+    const CLAP_SUPPORT_URL: Option<&'static str> = None;
+
+    const CLAP_FEATURES: &'static [ClapFeature] = {
+        use ClapFeature::*;
+
+        &[Instrument, Sampler, Synthesizer]
+    };
+}
+
+nih_export_clap!(MythrilOsc);
+nih_export_vst3!(MythrilOsc);

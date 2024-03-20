@@ -1,15 +1,15 @@
 [package]
-name = "mythril"
+name = "mythril_osc"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "mythril"
+name = "mythril_osc"
 path = "src/lib.rs"
 crate-type = ["cdylib","lib"]
 
 [[bin]]
-name = "mythril_standalone"
+name = "mythril_osc_standalone"
 path = "src/main.rs"
 
 [dependencies]

@@ -3,7 +3,7 @@ use wt_osc::{MAX_UNISON, PITCH_RANGE_SEMITONES};
 use super::*;
 
 #[derive(Params)]
-pub struct MythrilParameters {
+pub struct MythrilOscParams {
     #[id = "level"]
     pub level: FloatParam,
     #[id = "frame"]
@@ -22,7 +22,7 @@ pub struct MythrilParameters {
     pub detune_range: FloatParam,
 }
 
-impl Default for MythrilParameters {
+impl Default for MythrilOscParams {
     fn default() -> Self {
         Self {
             level: FloatParam::new(
