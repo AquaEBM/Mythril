@@ -96,18 +96,16 @@ impl Plugin for MythrilOsc {
             }
         }
 
-        if let Some(bufs) = proc.get_buffers() {
-            let buf = Cell::get_mut(bufs.first_mut().unwrap());
+        let buf = Cell::get_mut(proc.get_buffers().first_mut().unwrap());
 
-            assert!(buf.len() >= num_samples);
+        assert!(buf.len() >= num_samples);
 
-            for (mut output, &mut sample) in buffer.iter_samples().zip(buf) {
-                let [l, r] = sum_to_stereo_sample(sample).to_array();
+        for (mut output, &mut sample) in buffer.iter_samples().zip(buf) {
+            let [l, r] = sum_to_stereo_sample(sample).to_array();
 
-                unsafe {
-                    *output.get_unchecked_mut(0) = l;
-                    *output.get_unchecked_mut(1) = r;
-                }
+            unsafe {
+                *output.get_unchecked_mut(0) = l;
+                *output.get_unchecked_mut(1) = r;
             }
         }
 
