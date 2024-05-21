@@ -1,0 +1,13 @@
+[package]
+name = "wt_osc"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+polygraph = { git = "https://github.com/AquaEBM/polygraph.git" }
+realfft = "3.2"
+hound = "3.5"
+cell-project = "0.1.4"
