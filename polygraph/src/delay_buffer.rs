@@ -1,9 +1,28 @@
-use core::{iter, mem, num::NonZeroUsize};
+use core::{
+    hash::{Hash, Hasher},
+    iter, mem,
+    num::NonZeroUsize,
+};
 
+/// A delay buffer with a fixed, non-zero size
 #[derive(Clone, Debug, Default)]
 pub struct FixedDelayBuffer<T> {
     buf: Box<[T]>,
     current: usize,
+}
+
+impl<T> PartialEq for FixedDelayBuffer<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.buf.len() == other.buf.len()
+    }
+}
+
+impl<T> Eq for FixedDelayBuffer<T> {}
+
+impl<T> Hash for FixedDelayBuffer<T> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.buf.len().hash(state)
+    }
 }
 
 impl<T> FixedDelayBuffer<T> {
@@ -64,6 +83,7 @@ impl<T> FixedDelayBuffer<T> {
             // hopefully the checks are optimized away
             current.swap_with_slice(start);
 
+            // (panic) SAFETY: `Self::new` garantees self.buf is not empty
             let mut iter = rem.chunks_exact_mut(self.buf.len());
 
             iter.by_ref()

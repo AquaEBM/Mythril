@@ -82,16 +82,17 @@ pub(crate) unsafe fn new_owned_buffer<T>(len: usize) -> Buffer<T> {
     mem::transmute(Box::<[T]>::new_uninit_slice(len).assume_init())
 }
 
+#[inline]
 pub fn new_vfloat_buffer<T: SimdFloat>(len: usize) -> Buffer<T> {
     // SAFETY: `f32`s and 'f64's (and thus `Simd<f32, N>`s and `Simd<f64, N>`s,
-    // the only implementors of `SimdFloat`) are safely zeroable
+    // the only implementors of `SimdFloat`) can be initialized with any bit pattern
     unsafe { new_owned_buffer(len) }
 }
 
 // TODO: name bikeshedding
 
 // The following structs describe a linked list-like interface in order to allow
-// audio graph nodes (and potentially others nested in them) to (re)use buffers
+// audio graph nodes (and potentially other audio graphs nested in them) to (re)use buffers
 // from their callers as master/global inputs/outputs
 //
 // the tricks described in this discussion are used:
@@ -272,6 +273,11 @@ pub struct BuffersLocal<'a, T> {
 }
 
 impl<'a, T> BuffersLocal<'a, T> {
+    #[inline]
+    pub fn buffer_size(&self) -> NonZeroUsize {
+        self.len
+    }
+
     #[inline]
     pub fn with_indices(
         self,

@@ -10,3 +10,5 @@ edition = "2021"
 fnv = "1.0.4"
 simd_util = { path = "../simd_util", features = ["non_std_simd"] }
 rtrb = "0.2"
+atomic_refcell = "0.1"
+arrayvec = "0.7"

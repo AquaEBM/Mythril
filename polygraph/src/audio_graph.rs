@@ -63,7 +63,6 @@ pub enum ProcessTask {
         inputs: Box<[Option<BufferIndex>]>,
         outputs: Box<[Option<OutputBufferIndex>]>,
     },
-    Delay {},
 }
 
 impl ProcessTask {
@@ -83,7 +82,7 @@ impl ProcessTask {
     }
 
     fn replace_and_shift_output_buffers(&mut self, buffer_replacements: &HashMap<usize, usize>) {
-        fn replace_with_global<'a>(
+        fn replace_with_master<'a>(
             buffers: impl Iterator<Item = &'a mut OutputBufferIndex>,
             buffer_replacements: &HashMap<usize, usize>,
         ) {
@@ -107,7 +106,7 @@ impl ProcessTask {
                 left_input,
                 right_input,
                 output,
-            } => replace_with_global(
+            } => replace_with_master(
                 Self::filter_outputs_bufs(
                     [left_input, right_input].into_iter(),
                     iter::once(output),
@@ -117,20 +116,19 @@ impl ProcessTask {
 
             ProcessTask::Process {
                 inputs, outputs, ..
-            } => replace_with_global(
+            } => replace_with_master(
                 Self::filter_outputs_bufs(
                     inputs.iter_mut().filter_map(Option::as_mut),
                     outputs.iter_mut().filter_map(Option::as_mut),
                 ),
                 buffer_replacements,
             ),
-            ProcessTask::Delay {} => todo!(),
             _ => (),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AudioGraph {
     transposed: AudioGraphIO,
 }

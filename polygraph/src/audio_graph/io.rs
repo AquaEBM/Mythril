@@ -47,7 +47,7 @@ impl Ports {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct NodeIO {
     ports: Box<[Ports]>,
     num_opposite_ports: usize,
@@ -90,7 +90,7 @@ impl NodeIO {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(super) struct AudioGraphIO {
     processors: Vec<Option<NodeIO>>,
     global: NodeIO,
@@ -113,7 +113,7 @@ impl AudioGraphIO {
             processors: self
                 .processors
                 .iter()
-                .map(|proc| proc.as_ref().map(|io| io.with_opposite_config()))
+                .map(|io| io.as_ref().map(NodeIO::with_opposite_config))
                 .collect(),
         }
     }

@@ -15,3 +15,5 @@ pub mod voice;
 pub mod delay_buffer;
 
 extern crate alloc;
+
+pub mod ag_processor;
