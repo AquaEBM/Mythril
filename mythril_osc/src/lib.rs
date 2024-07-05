@@ -54,17 +54,20 @@ pub struct WTOsc {
 impl WTOsc {
     pub fn replace_table(
         &mut self,
-        table: Box<BandLimitedWaveTables>
+        table: Box<BandLimitedWaveTables>,
     ) -> Box<BandLimitedWaveTables> {
         mem::replace(&mut self.table, table)
     }
 
     pub fn replace_starting_phases(
         &mut self,
-        starting_phases: [f32 ; MAX_UNISON]
+        starting_phases: [f32; MAX_UNISON],
     ) -> [f32; MAX_UNISON] {
         unsafe {
-            mem::transmute(mem::replace(&mut self.starting_phases, mem::transmute(starting_phases)))
+            mem::transmute(mem::replace(
+                &mut self.starting_phases,
+                mem::transmute(starting_phases),
+            ))
         }
     }
 }
@@ -250,8 +253,8 @@ mod tests {
     use std::io::{self, Write};
 
     use polygraph::{
-        buffer::{BufferHandleLocal, OutputBufferIndex},
         buffer::new_vfloat_buffer,
+        buffer::{BufferHandleLocal, OutputBufferIndex},
     };
 
     #[test]

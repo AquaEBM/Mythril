@@ -206,15 +206,15 @@ pub struct WTOscVoiceCluster {
 
 impl WTOscVoiceCluster {
     #[inline]
-    pub fn active_voices(&mut self) -> impl Iterator<Item = (usize, &mut [Oscillator ; OSCS_PER_VOICE])> {
-        let mut voices = self.voices.iter_mut();
+    pub fn active_voices(
+        &mut self,
+    ) -> impl Iterator<Item = (usize, &mut [Oscillator; OSCS_PER_VOICE])> {
+        let mut voices = self.voices.iter_mut().enumerate();
         let mut mask = self.active_voice_mask;
-        let mut i = 0;
         iter::from_fn(move || {
-            let n = mask.trailing_zeros() as usize;
-            i += n;
+            let n = mask.trailing_zeros();
             mask >>= n;
-            voices.nth(n).map(|voice| (i, voice))
+            voices.nth(n as usize)
         })
     }
 
