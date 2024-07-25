@@ -39,9 +39,9 @@ where
     /// update the system's internal state (`v[n]`),
     /// and return the system's next output (`y[n]`)
     #[inline]
-    pub fn tick(&mut self, sample: Float<N>) -> Float<N> {
-        let output = sample + self.s;
-        self.s = output + sample;
+    pub fn tick(&mut self, x: Float<N>) -> Float<N> {
+        let output = x + self.s;
+        self.s = output + x;
         output
     }
 

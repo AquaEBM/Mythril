@@ -178,15 +178,16 @@ where
     #[inline]
     pub fn process(&mut self, sample: Float<N>) {
         let g = self.g.get_current();
-        let s1 = self.s[0].get_current();
-        let s2 = self.s[1].get_current();
+        let [s1, s2] = self.s.each_ref().map(Integrator::get_current);
 
         let g1 = self.r.get_current() + g;
 
         self.hp = g1.mul_add(-s1, sample - s2) / g1.mul_add(g, Simd::splat(1.));
 
-        self.bp = self.s[0].tick(self.hp * g);
-        self.lp = self.s[1].tick(self.bp * g);
+        let [s1, s2] = self.s.each_mut();
+
+        self.bp = s1.tick(self.hp * g);
+        self.lp = s2.tick(self.bp * g);
         self.x = sample;
     }
 

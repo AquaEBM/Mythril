@@ -66,7 +66,7 @@ pub enum ProcessTask {
 }
 
 impl ProcessTask {
-    fn filter_outputs_bufs<'a>(
+    fn filter_output_bufs<'a>(
         inputs: impl Iterator<Item = &'a mut BufferIndex>,
         outputs: impl Iterator<Item = &'a mut OutputBufferIndex>,
     ) -> impl Iterator<Item = &'a mut OutputBufferIndex> {
@@ -107,17 +107,14 @@ impl ProcessTask {
                 right_input,
                 output,
             } => replace_with_master(
-                Self::filter_outputs_bufs(
-                    [left_input, right_input].into_iter(),
-                    iter::once(output),
-                ),
+                Self::filter_output_bufs([left_input, right_input].into_iter(), iter::once(output)),
                 buffer_replacements,
             ),
 
             ProcessTask::Process {
                 inputs, outputs, ..
             } => replace_with_master(
-                Self::filter_outputs_bufs(
+                Self::filter_output_bufs(
                     inputs.iter_mut().filter_map(Option::as_mut),
                     outputs.iter_mut().filter_map(Option::as_mut),
                 ),

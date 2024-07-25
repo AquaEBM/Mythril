@@ -492,7 +492,6 @@ name = "polygraph"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "atomic_refcell",
  "fnv",
  "rtrb",
  "simd_util 0.1.0",

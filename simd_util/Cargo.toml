@@ -17,7 +17,7 @@ cfg-if = "1.0"
 
 [features]
 
-# for testing purposes
-# default = ["non_std_simd", "transfer_funcs", "nih_plug"]
+default = ["std_simd"]
 non_std_simd = ["dep:core_simd", "dep:std_float"]
+std_simd = []
 transfer_funcs = ["dep:num"]

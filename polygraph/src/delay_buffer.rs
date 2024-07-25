@@ -11,20 +11,6 @@ pub struct FixedDelayBuffer<T> {
     current: usize,
 }
 
-impl<T> PartialEq for FixedDelayBuffer<T> {
-    fn eq(&self, other: &Self) -> bool {
-        self.buf.len() == other.buf.len()
-    }
-}
-
-impl<T> Eq for FixedDelayBuffer<T> {}
-
-impl<T> Hash for FixedDelayBuffer<T> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.buf.len().hash(state)
-    }
-}
-
 impl<T> FixedDelayBuffer<T> {
     #[inline]
     pub fn new(num_samples: NonZeroUsize) -> Self
@@ -45,6 +31,12 @@ impl<T> FixedDelayBuffer<T> {
         // at `self.buf.len()` so it remains in the correct range,
         // and `Self::new` garantees `self.buf` isn't empty
         unsafe { self.buf.get_unchecked(self.current) }
+    }
+
+    #[inline]
+    pub fn len(&self) -> NonZeroUsize {
+        // SAFETY: self.buf has non-zero length
+        unsafe { NonZeroUsize::new_unchecked(self.buf.len()) }
     }
 
     #[inline]
@@ -83,8 +75,7 @@ impl<T> FixedDelayBuffer<T> {
             // hopefully the checks are optimized away
             current.swap_with_slice(start);
 
-            // (panic) SAFETY: `Self::new` garantees self.buf is not empty
-            let mut iter = rem.chunks_exact_mut(self.buf.len());
+            let mut iter = rem.chunks_exact_mut(self.len().get());
 
             iter.by_ref()
                 .for_each(|chunk| self.buf.swap_with_slice(chunk));

@@ -1,16 +1,15 @@
 use super::simd::{prelude::*, *};
-use std::f32::consts::LN_2;
+use core::f32::consts::LN_2;
 
 #[inline]
 pub fn lerp<const N: usize>(a: Simd<f32, N>, b: Simd<f32, N>, t: Simd<f32, N>) -> Simd<f32, N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    (b - a).mul_add(t, a)
+    t.mul_add(b - a, a)
 }
 
-// surprisingly efficient/accurate tan(x/2) approximation
-// credit to my uni for the free matlab
+// efficient tan(x/2) approximation
 #[inline]
 pub fn tan_half_x<const N: usize>(x: Simd<f32, N>) -> Simd<f32, N>
 where

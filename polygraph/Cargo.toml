@@ -8,7 +8,12 @@ edition = "2021"
 [dependencies]
 
 fnv = "1.0.4"
-simd_util = { path = "../simd_util", features = ["non_std_simd"] }
+simd_util = { path = "../simd_util", default-features = false }
 rtrb = "0.2"
-atomic_refcell = "0.1"
 arrayvec = "0.7"
+
+[features]
+
+default = ["std_simd"]
+std_simd = ["simd_util/std_simd"]
+non_std_simd = ["simd_util/non_std_simd"]

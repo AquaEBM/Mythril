@@ -1,4 +1,4 @@
-#![feature(portable_simd, new_uninit, as_array_of_cells, slice_flatten)]
+#![feature(portable_simd, new_uninit, as_array_of_cells)]
 
 extern crate alloc;
 
