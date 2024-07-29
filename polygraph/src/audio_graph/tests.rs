@@ -122,9 +122,9 @@ fn test_basic() {
     assert!(
         schedule
             == &[ProcessTask::Process {
-                index: 0,
-                inputs: Box::from([Some(BufferIndex::MasterInput(0))]),
-                outputs: Box::new([Some(OutputBufferIndex::Master(0))])
+                proc_index: 0,
+                inputs: Box::from([Some(BufferIndex::SuperInput(0))]),
+                outputs: Box::new([Some(OutBufIndex::Super(0))])
             }]
             && num_buffers == 0
     );
@@ -163,14 +163,14 @@ fn basic_chain() {
         schedule
             == &[
                 ProcessTask::Process {
-                    index: second_node_index,
-                    inputs: Box::new([Some(BufferIndex::MasterInput(0))]),
-                    outputs: Box::new([Some(OutputBufferIndex::Master(0))])
+                    proc_index: second_node_index,
+                    inputs: Box::new([Some(BufferIndex::SuperInput(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Super(0))])
                 },
                 ProcessTask::Process {
-                    index: first_node_index,
-                    inputs: Box::new([Some(BufferIndex::Output(OutputBufferIndex::Master(0)))]),
-                    outputs: Box::new([Some(OutputBufferIndex::Master(0))])
+                    proc_index: first_node_index,
+                    inputs: Box::new([Some(BufferIndex::Output(OutBufIndex::Super(0)))]),
+                    outputs: Box::new([Some(OutBufIndex::Super(0))])
                 },
             ]
             && num_buffers == 0
@@ -203,19 +203,19 @@ fn basic_adder() {
         schedule
             == &[
                 ProcessTask::Process {
-                    index: node1,
+                    proc_index: node1,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Master(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Super(0))]),
                 },
                 ProcessTask::Process {
-                    index: node2,
+                    proc_index: node2,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Local(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Local(0))]),
                 },
                 ProcessTask::Sum {
-                    left_input: BufferIndex::Output(OutputBufferIndex::Local(0)),
-                    right_input: BufferIndex::Output(OutputBufferIndex::Master(0)),
-                    output: OutputBufferIndex::Master(0),
+                    left: BufferIndex::Output(OutBufIndex::Local(0)),
+                    right: BufferIndex::Output(OutBufIndex::Super(0)),
+                    output: OutBufIndex::Super(0),
                 }
             ]
             && num_buffers == 1
@@ -256,29 +256,29 @@ fn multiple_adds() {
         schedule
             == &[
                 ProcessTask::Process {
-                    index: node1,
+                    proc_index: node1,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Master(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Super(0))]),
                 },
                 ProcessTask::Process {
-                    index: node2,
+                    proc_index: node2,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Local(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Local(0))]),
                 },
                 ProcessTask::Sum {
-                    left_input: BufferIndex::Output(OutputBufferIndex::Local(0)),
-                    right_input: BufferIndex::Output(OutputBufferIndex::Master(0)),
-                    output: OutputBufferIndex::Master(0),
+                    left: BufferIndex::Output(OutBufIndex::Local(0)),
+                    right: BufferIndex::Output(OutBufIndex::Super(0)),
+                    output: OutBufIndex::Super(0),
                 },
                 ProcessTask::Process {
-                    index: node3,
+                    proc_index: node3,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Local(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Local(0))]),
                 },
                 ProcessTask::Sum {
-                    left_input: BufferIndex::Output(OutputBufferIndex::Local(0)),
-                    right_input: BufferIndex::Output(OutputBufferIndex::Master(0)),
-                    output: OutputBufferIndex::Master(0),
+                    left: BufferIndex::Output(OutBufIndex::Local(0)),
+                    right: BufferIndex::Output(OutBufIndex::Super(0)),
+                    output: OutBufIndex::Super(0),
                 }
             ]
             && num_buffers == 1
@@ -439,19 +439,19 @@ fn m_structure() {
         schedule
             == &[
                 ProcessTask::Process {
-                    index: node1,
+                    proc_index: node1,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Master(0))]),
+                    outputs: Box::new([Some(OutBufIndex::Super(0))]),
                 },
                 ProcessTask::Process {
-                    index: node2,
+                    proc_index: node2,
                     inputs: Box::new([]),
-                    outputs: Box::new([Some(OutputBufferIndex::Master(2))]),
+                    outputs: Box::new([Some(OutBufIndex::Super(2))]),
                 },
                 ProcessTask::Sum {
-                    left_input: BufferIndex::Output(OutputBufferIndex::Master(2)),
-                    right_input: BufferIndex::Output(OutputBufferIndex::Master(0)),
-                    output: OutputBufferIndex::Master(1),
+                    left: BufferIndex::Output(OutBufIndex::Super(2)),
+                    right: BufferIndex::Output(OutBufIndex::Super(0)),
+                    output: OutBufIndex::Super(1),
                 }
             ]
             && num_buffers == 0

@@ -8,7 +8,7 @@ mod buffer_allocator;
 pub mod errors;
 use errors::{EdgeInsertError, EdgeNotFound};
 
-use super::buffer::{BufferIndex, OutputBufferIndex};
+use super::buffer::{BufferIndex, OutBufIndex};
 
 mod scheduler;
 use scheduler::Scheduler;
@@ -50,26 +50,26 @@ impl Port {
 #[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum ProcessTask {
     Sum {
-        left_input: BufferIndex,
-        right_input: BufferIndex,
-        output: OutputBufferIndex,
+        left: BufferIndex,
+        right: BufferIndex,
+        output: OutBufIndex,
     },
     CopyToMasterOutput {
         input: BufferIndex,
         outputs: Box<[usize]>,
     },
     Process {
-        index: usize,
+        proc_index: usize,
         inputs: Box<[Option<BufferIndex>]>,
-        outputs: Box<[Option<OutputBufferIndex>]>,
+        outputs: Box<[Option<OutBufIndex>]>,
     },
 }
 
 impl ProcessTask {
     fn filter_output_bufs<'a>(
         inputs: impl Iterator<Item = &'a mut BufferIndex>,
-        outputs: impl Iterator<Item = &'a mut OutputBufferIndex>,
-    ) -> impl Iterator<Item = &'a mut OutputBufferIndex> {
+        outputs: impl Iterator<Item = &'a mut OutBufIndex>,
+    ) -> impl Iterator<Item = &'a mut OutBufIndex> {
         inputs
             .filter_map(|buf| {
                 if let BufferIndex::Output(buffer) = buf {
@@ -83,13 +83,13 @@ impl ProcessTask {
 
     fn replace_and_shift_output_buffers(&mut self, buffer_replacements: &HashMap<usize, usize>) {
         fn replace_with_master<'a>(
-            buffers: impl Iterator<Item = &'a mut OutputBufferIndex>,
+            buffers: impl Iterator<Item = &'a mut OutBufIndex>,
             buffer_replacements: &HashMap<usize, usize>,
         ) {
             buffers.for_each(|buf| {
-                if let OutputBufferIndex::Local(idx) = buf {
+                if let OutBufIndex::Local(idx) = buf {
                     if let Some(&i) = buffer_replacements.get(idx) {
-                        *buf = OutputBufferIndex::Master(i);
+                        *buf = OutBufIndex::Super(i);
                     } else {
                         *idx -= buffer_replacements
                             .keys()
@@ -103,8 +103,8 @@ impl ProcessTask {
 
         match self {
             ProcessTask::Sum {
-                left_input,
-                right_input,
+                left: left_input,
+                right: right_input,
                 output,
             } => replace_with_master(
                 Self::filter_output_bufs([left_input, right_input].into_iter(), iter::once(output)),

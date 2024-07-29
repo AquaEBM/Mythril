@@ -53,7 +53,7 @@ impl Scheduler {
                 .collect();
 
             final_schedule.push(ProcessTask::Process {
-                index,
+                proc_index: index,
                 inputs,
                 outputs,
             });
@@ -64,7 +64,7 @@ impl Scheduler {
                 .ports()
                 .iter()
                 .enumerate()
-                .map(|(i, ports)| (!ports.is_empty()).then_some(BufferIndex::MasterInput(i)))
+                .map(|(i, ports)| (!ports.is_empty()).then_some(BufferIndex::SuperInput(i)))
                 .collect()
         };
 
@@ -78,8 +78,8 @@ impl Scheduler {
                     .filter_map(|port| buffer_allocator.insert_claim(buffer, port))
                     .for_each(|(prev_claim, new_output)| {
                         final_schedule.push(ProcessTask::Sum {
-                            left_input: buffer,
-                            right_input: prev_claim,
+                            left: buffer,
+                            right: prev_claim,
                             output: new_output,
                         })
                     })
@@ -102,17 +102,17 @@ impl Scheduler {
 
             if let Some(buf) = buf_allocator.free_buffer(&port) {
                 match buf {
-                    BufferIndex::MasterInput(_i) => {
+                    BufferIndex::SuperInput(_i) => {
                         buffer_copies
                             .entry(buf)
                             .or_insert_with(HashSet::default)
                             .insert(this_port_idx);
                     }
 
-                    BufferIndex::Output(OutputBufferIndex::Local(i)) => {
+                    BufferIndex::Output(OutBufIndex::Local(i)) => {
                         if let Some(&index) = buffer_replacements.get(&i) {
                             buffer_copies
-                                .entry(BufferIndex::Output(OutputBufferIndex::Master(index)))
+                                .entry(BufferIndex::Output(OutBufIndex::Super(index)))
                                 .or_insert_with(HashSet::default)
                                 .insert(this_port_idx);
                         } else {

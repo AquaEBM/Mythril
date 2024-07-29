@@ -1,4 +1,5 @@
 use alloc::sync::Arc;
+use core::iter;
 
 pub struct SharedLender<T: ?Sized> {
     ring_buffers: Vec<rtrb::Producer<Arc<T>>>,
@@ -16,7 +17,7 @@ impl<T: ?Sized> Default for SharedLender<T> {
 
 impl<T: ?Sized> SharedLender<T> {
     pub fn send(&mut self, item: Arc<T>) {
-        for producer in &mut self.ring_buffers {
+        for producer in self.ring_buffers.iter_mut() {
             producer.push(item.clone()).unwrap();
         }
 
@@ -49,11 +50,6 @@ impl<T: ?Sized> LenderReciever<T> {
     }
 
     pub fn recv_latest(&mut self) -> Option<Arc<T>> {
-        let mut output = None;
-        while let Some(item) = self.recv_next() {
-            output = Some(item);
-        }
-
-        output
+        iter::from_fn(|| self.recv_next()).last()
     }
 }

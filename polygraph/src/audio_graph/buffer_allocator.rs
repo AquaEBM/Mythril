@@ -5,8 +5,8 @@ use super::*;
 #[derive(Debug, Clone, Default)]
 pub(super) struct BufferAllocator {
     claims: HashMap<Port, BufferIndex>,
-    ports: HashMap<OutputBufferIndex, Ports>,
-    free_buffers: HashSet<OutputBufferIndex>,
+    ports: HashMap<OutBufIndex, Ports>,
+    free_buffers: HashSet<OutBufIndex>,
     num_intermediate_buffers: usize,
 }
 
@@ -29,7 +29,7 @@ impl BufferAllocator {
         buf_index
     }
 
-    fn remove_reservation(&mut self, buf: OutputBufferIndex, port: &Port) {
+    fn remove_reservation(&mut self, buf: OutBufIndex, port: &Port) {
         let ports = self.ports.get_mut(&buf).unwrap();
         assert!(ports.remove_port(port));
         if ports.is_empty() {
@@ -44,13 +44,13 @@ impl BufferAllocator {
         }
     }
 
-    pub(super) fn reserve_free_buffer(&mut self, ports: Ports) -> Option<OutputBufferIndex> {
+    pub(super) fn reserve_free_buffer(&mut self, ports: Ports) -> Option<OutBufIndex> {
         if !ports.is_empty() {
             let buf = if let Some(buf) = self.free_buffers.iter().next().copied() {
                 self.free_buffers.remove(&buf);
                 buf
             } else {
-                let new_buf_index = OutputBufferIndex::Local(self.num_intermediate_buffers);
+                let new_buf_index = OutBufIndex::Local(self.num_intermediate_buffers);
                 self.num_intermediate_buffers += 1;
 
                 new_buf_index
@@ -67,7 +67,7 @@ impl BufferAllocator {
         &mut self,
         buffer: BufferIndex,
         port: Port,
-    ) -> Option<(BufferIndex, OutputBufferIndex)> {
+    ) -> Option<(BufferIndex, OutBufIndex)> {
         if let Some(buf) = self.free_buffer(&port) {
             self.try_remove_reservation(buffer, &port);
 

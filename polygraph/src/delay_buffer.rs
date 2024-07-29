@@ -1,8 +1,4 @@
-use core::{
-    hash::{Hash, Hasher},
-    iter, mem,
-    num::NonZeroUsize,
-};
+use core::{iter, mem, num::NonZeroUsize};
 
 /// A delay buffer with a fixed, non-zero size
 #[derive(Clone, Debug, Default)]
@@ -72,7 +68,7 @@ impl<T> FixedDelayBuffer<T> {
         let current = unsafe { self.buf.get_unchecked_mut(self.current..) };
 
         if let Some((start, rem)) = buf.split_at_mut_checked(current.len()) {
-            // hopefully the checks are optimized away
+            // hopefully the length equality checks are optimized away
             current.swap_with_slice(start);
 
             let mut iter = rem.chunks_exact_mut(self.len().get());

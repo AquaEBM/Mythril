@@ -1,5 +1,5 @@
 [workspace]
 
-members = ["mythril_osc", "polygraph", "simd_util"]
+members = ["polygraph", "simd_util"]
 
 resolver = "2"
