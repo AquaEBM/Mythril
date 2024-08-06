@@ -1,4 +1,4 @@
-use super::{buffer::BufferIOSliced, simd_util::simd::num::SimdFloat};
+use super::{buffer::Buffers, simd_util::simd::num::SimdFloat};
 
 use alloc::sync::Arc;
 use std::io::{Read, Write};
@@ -18,11 +18,11 @@ impl Parameters for () {
 pub trait Processor {
     type Sample: SimdFloat;
 
-    /// Process the provided buffers, and report the current state of the output ports.
+    /// Process the provided buffers, and return the current processing state.
     ///
     /// # Processing buffers
     ///
-    /// All buffers have the same length: [`buffers.len( )`](BufferIOSliced::len).
+    /// All buffers have the same length: [`buffers.len( )`](Buffers::len).
     /// The values in output buffers should be considered garbage and must be overwritten.
     /// if output is silent, you must fill the buffer with `0.0` values.
     ///
@@ -30,35 +30,38 @@ pub trait Processor {
     ///
     /// - Input buffers may alias with eachother.
     /// - An output buffer may alias with any number of input buffers.
-    /// - Output buffers are always distinct.
+    /// - Output buffers are always distinct from eachother.
     ///
-    /// # Output port state.
-    ///
-    /// When accessing the buffers, a reference to an integer value is also provided. For an
-    /// input port, this is the state of the output port that sends data to it. For an output
-    /// port this represents the current state of this processor's corresponding output port.
-    /// The initial value should be considered as garbage and must be overwritten.
+    /// # Return value
     ///
     /// The value at each lane indicates the processing state of the corresponding voice:
     ///
-    /// - `MAX` (all bits set to 1) means that it must be kept alive, the processor has not
-    ///   finished processing and requires another `process` call.
+    /// - `MAX` (all bits set to 1) means that it must be kept alive, it has not
+    ///   finished and requires another `process` call.
     ///
-    /// - `n` < [`buffers.len( )`](BufferIOSliced::len), means that the processor
-    ///   has finished processing at the `n`th sample, this allows the caller to assume that
-    ///   all subsequent samples will be silent.
+    /// - A value `n` less than [`buffers.len( )`](Buffers::len) means that it
+    ///   has finished processing at the `n`th sample. Note that this allows the caller to
+    ///   assume that all subsequent samples will be silent.
     ///
-    /// - Any other value means that the processor doesn't necessarily require another processing
-    ///   cycle
-    fn process(&mut self, buffers: BufferIOSliced<Self::Sample>, cluster_idx: usize);
-
-    fn audio_io_layout(&self) -> (usize, usize);
+    /// - Any other value means that it doesn't necessarily require another processing
+    ///   cycle, but will continue to produce coherent data when `process` is called, this is
+    ///   useful for generators without envelopes, such as oscillators, LFOs, samplers etc.,
+    ///   where whether the voice should be kept alive depends mainly on the nodes recieving
+    ///   said generators' outputs.
+    ///
+    /// When accessing input buffers, a reference to the state
+    /// of the node that has last written data to it is also provided.
+    ///
+    /// If different output ports have different states, the maximum (lane-wise) value should
+    /// be returned, to avoid accidentally informing the caller that a voice has finished
+    /// processing when it hasn't.
+    fn process(&mut self, buffers: Buffers<Self::Sample>, cluster_idx: usize);
 
     fn parameters(&self) -> Arc<dyn Parameters>;
 
     fn initialize(&mut self, sr: f32, max_buffer_size: usize, max_num_clusters: usize) -> usize;
 
-    // TODO: use vectors & masks in the followng three methods
+    // TODO: maybe use vectors & masks in the followng methods?
 
     fn set_voice_note(&mut self, index: (usize, usize), velocity: f32, note: u8);
 
@@ -73,13 +76,8 @@ impl<T: ?Sized + Processor> Processor for Box<T> {
     type Sample = T::Sample;
 
     #[inline]
-    fn process(&mut self, buffers: BufferIOSliced<Self::Sample>, cluster_idx: usize) {
+    fn process(&mut self, buffers: Buffers<Self::Sample>, cluster_idx: usize) {
         self.as_mut().process(buffers, cluster_idx)
-    }
-
-    #[inline]
-    fn audio_io_layout(&self) -> (usize, usize) {
-        self.as_ref().audio_io_layout()
     }
 
     #[inline]

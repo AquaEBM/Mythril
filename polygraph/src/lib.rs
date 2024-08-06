@@ -1,4 +1,4 @@
-#![feature(portable_simd, new_uninit, array_chunks)]
+#![feature(portable_simd, new_uninit)]
 
 extern crate alloc;
 
@@ -8,10 +8,8 @@ pub mod processor;
 
 pub mod lender;
 
-pub mod audio_graph;
-
 pub use simd_util;
 
 pub mod delay_buffer;
 
-pub mod ag_processor;
+pub mod graph;
