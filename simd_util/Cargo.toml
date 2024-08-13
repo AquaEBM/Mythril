@@ -18,6 +18,6 @@ cfg-if = "1.0"
 [features]
 
 default = ["std_simd"]
-non_std_simd = ["dep:core_simd", "dep:std_float"]
+core_simd_crate = ["dep:core_simd", "dep:std_float"]
 std_simd = []
 transfer_funcs = ["dep:num"]
