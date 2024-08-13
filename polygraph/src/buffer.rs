@@ -157,8 +157,8 @@ impl<T, U> BufferList<T, U> {
     }
 
     #[inline]
-    pub fn range(&mut self, start: usize, len: NonZeroUsize) -> Option<BufferListRef<T, U>> {
-        (start + len.get() <= self.buf_len.get()).then_some(BufferListRef {
+    pub fn range_mut(&mut self, start: usize, len: NonZeroUsize) -> Option<BufferListRefMut<T, U>> {
+        (start + len.get() <= self.buf_len.get()).then_some(BufferListRefMut {
             buffers: self.buffers.as_mut(),
             start,
             len,
@@ -166,20 +166,20 @@ impl<T, U> BufferList<T, U> {
     }
 }
 
-pub struct BufferListRef<'a, T, U> {
+pub struct BufferListRefMut<'a, T, U> {
     buffers: &'a mut [(Buffer<T>, Cell<U>)],
     start: usize,
     len: NonZeroUsize,
 }
 
-impl<'a, T, U> From<&'a mut BufferList<T, U>> for BufferListRef<'a, T, U> {
+impl<'a, T, U> From<&'a mut BufferList<T, U>> for BufferListRefMut<'a, T, U> {
     #[inline]
     fn from(value: &'a mut BufferList<T, U>) -> Self {
-        value.range(0, value.buf_len).unwrap()
+        value.range_mut(0, value.buf_len).unwrap()
     }
 }
 
-impl<'a, T, U> BufferListRef<'a, T, U> {
+impl<'a, T, U> BufferListRefMut<'a, T, U> {
     #[inline]
     pub fn len(&self) -> NonZeroUsize {
         self.len
@@ -206,10 +206,19 @@ impl<'a, T, U> BufferListRef<'a, T, U> {
             )
         })
     }
+
+    #[inline]
+    pub fn reborrow(&mut self) -> BufferListRefMut<T, U> {
+        BufferListRefMut {
+            buffers: &mut self.buffers,
+            start: self.start,
+            len: self.len,
+        }
+    }
 }
 
 pub struct Buffers<'a, T: SimdFloat> {
-    buffers: BufferListRef<'a, T, T::Bits>,
+    buffers: BufferListRefMut<'a, T, T::Bits>,
     inputs: &'a [usize],
     outputs: &'a [usize],
 }

@@ -1,12 +1,13 @@
 use core::{
-    iter,
+    iter, mem,
     ops::{Index, IndexMut},
 };
-use fnv::FnvBuildHasher;
 use std::collections;
 
-type HashMap<K, V> = collections::HashMap<K, V, FnvBuildHasher>;
-type HashSet<T> = collections::HashSet<T, FnvBuildHasher>;
+type HasherBuilder = fnv::FnvBuildHasher;
+
+type HashMap<K, V> = collections::HashMap<K, V, HasherBuilder>;
+type HashSet<T> = collections::HashSet<T, HasherBuilder>;
 
 #[cfg(test)]
 mod tests;
@@ -32,7 +33,7 @@ pub struct Port(HashMap<usize, HashSet<usize>>);
 impl Port {
     #[inline]
     pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
+        self.0.values().all(|ports| ports.is_empty())
     }
 
     #[inline]
@@ -82,11 +83,11 @@ impl Port {
         PortIndex {
             port_index,
             node_index,
-        }: PortIndex,
+        }: &PortIndex,
     ) -> bool {
         self.0
-            .get_mut(&node_index)
-            .is_some_and(|ports| ports.remove(&port_index))
+            .get_mut(node_index)
+            .is_some_and(|ports| ports.remove(port_index))
     }
 
     #[inline]
@@ -151,7 +152,7 @@ impl Node {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, Debug)]
 struct BufferAllocator {
     buffers: HashMap<PortIndex, usize>,
     ports: Vec<HashSet<PortIndex>>,
@@ -162,30 +163,39 @@ impl BufferAllocator {
         self.ports.len()
     }
 
-    fn get_free(&mut self) -> usize {
-        for (i, port_list) in self.ports.iter_mut().enumerate() {
-            if port_list.is_empty() {
-                return i;
-            }
-        }
-
-        let tmp = self.ports.len();
-        self.ports.push(HashSet::default());
-        tmp
+    fn get_empty_set_index<T>(list: &mut Vec<HashSet<T>>) -> usize {
+        list.iter()
+            .enumerate()
+            .find_map(|(i, port_idxs)| port_idxs.is_empty().then_some(i))
+            .unwrap_or_else(|| {
+                let tmp = list.len();
+                list.push(HashSet::default());
+                tmp
+            })
     }
 
-    fn try_claim(&mut self, buffer_index: usize, port: PortIndex) -> bool {
-        if self.buffers.contains_key(&port) {
-            return false;
-        }
+    fn get_free(&mut self) -> usize {
+        Self::get_empty_set_index(&mut self.ports)
+    }
 
-        self.buffers.insert(port, buffer_index);
+    fn claim(&mut self, buffer_index: usize, ports: HashSet<PortIndex>) -> HashSet<PortIndex> {
+        let port_idxs = &mut self.ports[buffer_index];
+
         assert!(
-            self.ports[buffer_index].insert(port),
-            "INTERNAL ERROR: port reserves a buffer but is not in it's port list entry"
+            mem::replace(port_idxs, ports).is_empty(),
+            "INTERNAL ERROR: cannot claim currently claimed buffer"
         );
 
-        true
+        port_idxs
+            .extract_if(|port| {
+                if self.buffers.contains_key(port) {
+                    return true;
+                }
+
+                self.buffers.insert(*port, buffer_index);
+                false
+            })
+            .collect()
     }
 
     fn remove_claim(&mut self, port: &PortIndex) -> usize {
@@ -204,7 +214,7 @@ impl BufferAllocator {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
-pub enum ProcessTask {
+pub enum Task {
     Node {
         index: usize,
         inputs: Box<[usize]>,
@@ -215,85 +225,101 @@ pub enum ProcessTask {
         right: usize,
         output: usize,
     },
-    OutputMaster {
-        buffer: usize,
-        output: usize,
-    },
+}
+
+impl Task {
+    #[inline]
+    pub fn node(
+        index: usize,
+        inputs: impl Into<Box<[usize]>>,
+        outputs: impl Into<Box<[usize]>>,
+    ) -> Self {
+        Self::Node {
+            index,
+            inputs: inputs.into(),
+            outputs: outputs.into(),
+        }
+    }
+
+    #[inline]
+    pub fn sum(left: usize, right: usize, output: usize) -> Self {
+        Self::Sum {
+            left,
+            right,
+            output,
+        }
+    }
 }
 
 #[derive(Debug)]
 struct Scheduler {
     transposed: AudioGraph,
     process_order: Vec<usize>,
-    num_root_nodes: usize,
 }
 
 impl Scheduler {
-    fn compile(mut self) -> (usize, Vec<ProcessTask>) {
+    fn compile(self) -> (usize, Vec<Task>) {
         let mut allocator = BufferAllocator::default();
         let mut schedule = vec![];
-        let mut adders = vec![];
 
-        println!("{self:#?}");
+        let Self {
+            mut transposed,
+            process_order,
+        } = self;
 
-        for node_index in self.process_order {
-            if node_index < self.num_root_nodes {
-                let buffer = allocator.remove_claim(&PortIndex {
+        for node_index in process_order {
+            let proc = transposed.get_node_mut(node_index).unwrap();
+
+            let inputs = (0..proc.num_backward_ports)
+                .map(|i| PortIndex {
                     node_index,
-                    port_index: 0,
-                });
+                    port_index: i,
+                })
+                .map(|port| allocator.remove_claim(&port))
+                .collect();
 
-                if buffer != usize::MAX {
-                    schedule.push(ProcessTask::OutputMaster {
-                        buffer,
-                        output: node_index,
-                    })
-                }
-            } else {
-                let proc = self.transposed.get_node_mut(node_index).unwrap();
+            let outputs = proc
+                .forward_ports
+                .iter()
+                .map(|port| {
+                    if port.is_empty() {
+                        usize::MAX
+                    } else {
+                        allocator.get_free()
+                    }
+                })
+                .collect();
 
-                let inputs = (0..proc.num_backward_ports)
-                    .map(|i| PortIndex {
-                        node_index,
-                        port_index: i,
-                    })
-                    .map(|port| allocator.remove_claim(&port))
-                    .collect();
+            schedule.push(Task::Node {
+                index: node_index,
+                inputs,
+                outputs,
+            });
 
-                let outputs = proc
-                    .forward_ports
-                    .iter_mut()
-                    .map(|ports| {
-                        if ports.is_empty() {
-                            return usize::MAX;
-                        }
+            let Some(Task::Node { outputs, .. }) = schedule.last() else {
+                unreachable!("huh??")
+            };
 
-                        let buf_index = allocator.get_free();
+            for (&buf_index, port) in outputs
+                .clone()
+                .iter()
+                .zip(proc.forward_ports.iter_mut())
+                .filter(|(&i, _)| i != usize::MAX)
+            {
+                for port in allocator.claim(buf_index, port.drain_connections().collect()) {
+                    let other_buf_idx = allocator.remove_claim(&port);
+                    let new_free_buf = allocator.get_free();
+                    assert!(
+                        allocator
+                            .claim(new_free_buf, HashSet::from_iter([port]))
+                            .is_empty(),
+                        "INTERNAL ERROR: redundant claims cleared yet still found"
+                    );
 
-                        for port in ports.drain_connections() {
-                            if !allocator.try_claim(buf_index, port) {
-                                let other_buf_index = allocator.remove_claim(&port);
-                                let adder_output = allocator.get_free();
-
-                                adders.push(((buf_index, other_buf_index), adder_output));
-                            }
-                        }
-
-                        buf_index
-                    })
-                    .collect();
-
-                schedule.push(ProcessTask::Node {
-                    index: node_index,
-                    inputs,
-                    outputs,
-                });
-
-                for ((left, right), output) in adders.drain(..) {
-                    schedule.push(ProcessTask::Sum {
-                        left,
-                        right,
-                        output,
+                    schedule.push(Task::Sum {
+                        left: buf_index,
+                        right: other_buf_idx,
+                        output: new_free_buf,
                     });
                 }
             }
@@ -340,15 +366,7 @@ impl IndexMut<PortIndex> for AudioGraph {
 }
 
 impl AudioGraph {
-    fn scheduler(&self, num_root_nodes: usize) -> Scheduler {
-        assert!(
-            self.nodes[..num_root_nodes].iter().all(|slot| slot
-                .as_ref()
-                .is_some_and(|node| node.num_backward_ports() == 1)),
-            "INTERNAL ERROR: each root node ({:?}) must have exactly one input",
-            0..num_root_nodes,
-        );
-
+    fn scheduler(&self, root_nodes: HashSet<usize>) -> Scheduler {
         let mut transposed = Self {
             nodes: self
                 .nodes
@@ -395,14 +413,13 @@ impl AudioGraph {
             order.push(node_index);
         }
 
-        for i in 0..num_root_nodes {
-            insert_opposite_ports(&mut transposed, self, i, &mut process_order)
+        for node_idx in root_nodes {
+            insert_opposite_ports(&mut transposed, self, node_idx, &mut process_order)
         }
 
         Scheduler {
             transposed,
             process_order,
-            num_root_nodes,
         }
     }
 
@@ -508,7 +525,7 @@ impl AudioGraph {
     /// If any of first `num_root_nodes` nodes of the graph must have more than 1 input,
     /// or if an internal error occured
     #[inline]
-    pub fn compile(&self, num_root_nodes: usize) -> (usize, Vec<ProcessTask>) {
-        self.scheduler(num_root_nodes).compile()
+    pub fn compile(&self, root_nodes: HashSet<usize>) -> (usize, Vec<Task>) {
+        self.scheduler(root_nodes).compile()
     }
 }

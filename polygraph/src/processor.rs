@@ -39,7 +39,7 @@ pub trait Processor {
     /// - `MAX` (all bits set to 1) means that it must be kept alive, it has not
     ///   finished and requires another `process` call.
     ///
-    /// - A value `n` less than [`buffers.len( )`](Buffers::len) means that it
+    /// - A value `n` < [`buffers.len( )`](Buffers::len) means that it
     ///   has finished processing at the `n`th sample. Note that this allows the caller to
     ///   assume that all subsequent samples will be silent.
     ///

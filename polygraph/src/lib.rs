@@ -1,4 +1,4 @@
-#![feature(portable_simd, new_uninit)]
+#![feature(portable_simd, new_uninit, hash_extract_if)]
 
 extern crate alloc;
 

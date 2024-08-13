@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 
-fnv = "1.0.4"
+fnv = "1.0"
 simd_util = { path = "../simd_util", default-features = false }
 rtrb = "0.2"
 arrayvec = "0.7"

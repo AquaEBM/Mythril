@@ -93,20 +93,3 @@ impl<T> FixedDelayBuffer<T> {
         self.delay_maybe_opt(buf)
     }
 }
-
-#[cfg(test)]
-pub mod tests {
-
-    use super::*;
-
-    #[test]
-    fn nani() {
-        let mut buf = Vec::from_iter((0..12).map(|i| i as f32));
-
-        let mut delay = FixedDelayBuffer::new(NonZeroUsize::new(18).unwrap());
-
-        delay.delay(&mut buf);
-
-        println!("{buf:?}");
-    }
-}
