@@ -16,4 +16,4 @@ arrayvec = "0.7"
 
 default = ["std_simd"]
 std_simd = ["simd_util/std_simd"]
-non_std_simd = ["simd_util/non_std_simd"]
+core_simd_crate = ["simd_util/core_simd_crate"]
