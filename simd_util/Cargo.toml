@@ -11,9 +11,9 @@ edition = "2021"
 core_simd = { git = "https://github.com/rust-lang/portable-simd.git", optional = true }
 std_float = { git = "https://github.com/rust-lang/portable-simd.git", optional = true }
 nih_plug = { git = "https://github.com/robbert-vdh/nih-plug.git", optional = true }
-num = { version = "0.4.1", optional = true }
+num = { version = "0.4", optional = true }
 
-cfg-if = "1.0"
+cfg-if = "1"
 
 [features]
 

@@ -15,15 +15,15 @@ pub mod svf;
 /// Specifically, let `x[n]` be the input signal, `y[n]` be the output signal, and `v[n]`
 /// be the internal state.
 ///
-/// This system's difference equation is:
-/// ```ignore
-/// y[n] = x[n] + v[n-1]
-/// v[n] = y[n] + x[n]
-/// ```
-/// Thus, it's transfer function would be:
-/// ```ignore
-/// (z + 1) / (z - 1)
-/// ```
+/// This system's difference equations are:
+///
+/// `y[n] = x[n] + v[n-1]`
+///
+/// `v[n] = y[n] + x[n]`
+///
+/// Transfer function:
+///
+/// `(z + 1) / (z - 1)`
 pub struct Integrator<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
@@ -53,7 +53,7 @@ where
 
     /// Get the current `v[n]` state
     #[inline]
-    pub fn get_current(&self) -> Float<N> {
-        self.s
+    pub fn get_current(&self) -> &Float<N> {
+        &self.s
     }
 }

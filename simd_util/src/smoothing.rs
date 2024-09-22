@@ -16,7 +16,7 @@ pub trait Smoother {
     fn set_all_vals_instantly(&mut self, target: Self::Value);
     fn tick(&mut self, t: Self::Value);
     fn tick1(&mut self);
-    fn get_current(&self) -> Self::Value;
+    fn current(&self) -> Self::Value;
 }
 
 #[derive(Clone, Copy)]
@@ -89,7 +89,7 @@ where
     }
 
     #[inline]
-    fn get_current(&self) -> Self::Value {
+    fn current(&self) -> Self::Value {
         self.value
     }
 }
@@ -153,7 +153,7 @@ where
     }
 
     #[inline]
-    fn get_current(&self) -> Self::Value {
+    fn current(&self) -> Self::Value {
         self.value
     }
 }

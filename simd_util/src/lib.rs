@@ -7,6 +7,7 @@ pub mod simd {
     pub use core_simd::simd::*;
     pub use std_float::*;
 }
+
 #[cfg(feature = "std_simd")]
 pub use std::simd;
 

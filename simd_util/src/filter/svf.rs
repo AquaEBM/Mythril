@@ -65,7 +65,7 @@ where
         self.r.set_all_vals_instantly(res);
     }
 
-    /// call this if you intend to later output _only_ low-shelving filter shapes
+    /// call this if you intend to use _only_ the low-shelving output
     #[inline]
     pub fn set_params_low_shelving(&mut self, w_c: Float<N>, res: Float<N>, gain: Float<N>) {
         let m2 = gain.sqrt();
@@ -73,14 +73,14 @@ where
         self.set_values(g / m2.sqrt(), res, m2);
     }
 
-    /// call this if you intend to later output _only_ band-shelving filter shapes
+    /// call this if you intend to use _only_ the band-shelving output
     #[inline]
     pub fn set_params_band_shelving(&mut self, w_c: Float<N>, res: Float<N>, gain: Float<N>) {
         let g = Self::g(w_c);
         self.set_values(g, res / gain.sqrt(), gain);
     }
 
-    /// call this if you intend to later output _only_ high-shelving filter shapes
+    /// call this if you intend to use _only_ the high-shelving output
     #[inline]
     pub fn set_params_high_shelving(&mut self, w_c: Float<N>, res: Float<N>, gain: Float<N>) {
         let m2 = gain.sqrt();
@@ -88,10 +88,10 @@ where
         self.set_values(g * m2.sqrt(), res, m2);
     }
 
-    /// call this if you intend to later output non-shelving filter shapes
+    /// call this if you do not intend to use the shelving outputs
     #[inline]
-    pub fn set_params(&mut self, w_c: Float<N>, res: Float<N>, _gain: Float<N>) {
-        self.set_values(Self::g(w_c), res, Simd::splat(1.));
+    pub fn set_params(&mut self, w_c: Float<N>, res: Float<N>, gain: Float<N>) {
+        self.set_values(Self::g(w_c), res, gain);
     }
 
     #[inline]
@@ -169,7 +169,7 @@ where
         self.g.tick1();
     }
 
-    /// Update the filter's internal state, given the provided input sample.
+    /// Update the filter's internal state.
     ///
     /// This should be called _only once_ per sample, _every sample_
     ///
@@ -177,10 +177,10 @@ where
     /// using `Self::get_{highpass, bandpass, notch, ...}`
     #[inline]
     pub fn process(&mut self, sample: Float<N>) {
-        let g = self.g.get_current();
-        let [s1, s2] = self.s.each_ref().map(Integrator::get_current);
+        let g = self.g.current();
+        let [&s1, s2] = self.s.each_ref().map(Integrator::get_current);
 
-        let g1 = self.r.get_current() + g;
+        let g1 = self.r.current() + g;
 
         self.hp = g1.mul_add(-s1, sample - s2) / g1.mul_add(g, Simd::splat(1.));
 
@@ -192,8 +192,8 @@ where
     }
 
     #[inline]
-    fn get_gain(&self) -> Float<N> {
-        self.k.get_current()
+    pub fn get_passthrough(&self) -> Float<N> {
+        self.x
     }
 
     #[inline]
@@ -208,7 +208,7 @@ where
 
     #[inline]
     pub fn get_unit_bandpass(&self) -> Float<N> {
-        self.r.get_current() * self.bp
+        self.r.current() * self.bp
     }
 
     #[inline]
@@ -219,18 +219,18 @@ where
     #[inline]
     pub fn get_allpass(&self) -> Float<N> {
         // 2 * bp1 - x
-        self.r.get_current().mul_add(self.bp + self.bp, -self.x)
+        self.r.current().mul_add(self.bp + self.bp, -self.x)
     }
 
     #[inline]
     pub fn get_notch(&self) -> Float<N> {
         // x - bp1
-        self.bp.mul_add(-self.r.get_current(), self.x)
+        self.bp.mul_add(-self.r.current(), self.x)
     }
 
     #[inline]
     pub fn get_high_shelf(&self) -> Float<N> {
-        let m2 = self.get_gain();
+        let m2 = self.k.current();
         let bp1 = self.get_unit_bandpass();
         m2.mul_add(m2.mul_add(self.hp, bp1), self.lp)
     }
@@ -238,12 +238,12 @@ where
     #[inline]
     pub fn get_band_shelf(&self) -> Float<N> {
         let bp1 = self.get_unit_bandpass();
-        bp1.mul_add(self.get_gain(), self.x - bp1)
+        bp1.mul_add(self.k.current(), self.x - bp1)
     }
 
     #[inline]
     pub fn get_low_shelf(&self) -> Float<N> {
-        let m2 = self.get_gain();
+        let m2 = self.k.current();
         let bp1 = self.get_unit_bandpass();
         m2.mul_add(m2.mul_add(self.lp, bp1), self.hp)
     }

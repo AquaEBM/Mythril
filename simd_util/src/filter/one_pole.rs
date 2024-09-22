@@ -128,7 +128,7 @@ where
     #[inline]
     pub fn process(&mut self, x: Float<N>) {
         let s = self.s.get_current();
-        let g1 = self.g1.get_current();
+        let g1 = self.g1.current();
 
         self.x = x;
         self.lp = self.s.tick((x - s) * g1);
@@ -151,12 +151,12 @@ where
 
     #[inline]
     pub fn get_low_shelf(&self) -> Float<N> {
-        self.k.get_current() * self.lp + self.get_highpass()
+        self.k.current() * self.lp + self.get_highpass()
     }
 
     #[inline]
     pub fn get_high_shelf(&self) -> Float<N> {
-        self.k.get_current().mul_add(self.get_highpass(), self.lp)
+        self.k.current().mul_add(self.get_highpass(), self.lp)
     }
 
     pub fn get_output_function(mode: FilterMode) -> fn(&Self) -> Float<N> {
