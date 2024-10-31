@@ -1,37 +1,28 @@
-use core::{borrow::Borrow, hash::Hash, mem, ops::Index};
+use core::{hash::Hash, mem, ops::Index};
 use fnv::{FnvHashMap, FnvHashSet};
 use std::collections::hash_map::Entry;
+
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+pub struct InputID(u32);
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+pub struct NodeID(u32);
+#[derive(Hash, PartialEq, Eq, Clone, Debug)]
+pub struct OutputID(u32);
 
 #[cfg(test)]
 mod tests;
 
-#[derive(Clone, Debug)]
-pub struct Port<NodeID, PortID>(FnvHashMap<NodeID, FnvHashSet<PortID>>);
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Input(FnvHashMap<NodeID, FnvHashSet<OutputID>>);
 
-impl<NodeID, PortID> Default for Port<NodeID, PortID> {
-    fn default() -> Self {
-        Self(Default::default())
-    }
-}
-
-impl<NodeID: Hash + Eq, PortID: Hash + Eq> PartialEq for Port<NodeID, PortID> {
-    fn eq(&self, other: &Self) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl<NodeID: Hash + Eq, PortID: Hash + Eq> Eq for Port<NodeID, PortID> {}
-
-impl<NodeID, PortID> Port<NodeID, PortID> {
+impl Input {
     #[inline]
-    pub fn connections(&self) -> &FnvHashMap<NodeID, FnvHashSet<PortID>> {
+    pub fn connections(&self) -> &FnvHashMap<NodeID, FnvHashSet<OutputID>> {
         &self.0
     }
-}
 
-impl<NodeID: Hash + Eq, PortID: Hash + Eq> Port<NodeID, PortID> {
     #[inline]
-    fn insert_port(&mut self, (node_index, port_index): (NodeID, PortID)) -> bool {
+    fn insert_output(&mut self, (node_index, port_index): (NodeID, OutputID)) -> bool {
         match self.0.entry(node_index) {
             Entry::Occupied(e) => e.into_mut().insert(port_index),
             Entry::Vacant(e) => {
@@ -42,7 +33,7 @@ impl<NodeID: Hash + Eq, PortID: Hash + Eq> Port<NodeID, PortID> {
     }
 
     #[inline]
-    pub fn remove_port(&mut self, (node_index, port_index): (&NodeID, &PortID)) -> bool {
+    pub fn remove_port(&mut self, (node_index, port_index): (&NodeID, &OutputID)) -> bool {
         let mut empty = false;
 
         let tmp = self.0.get_mut(node_index).is_some_and(|ports| {
@@ -57,151 +48,113 @@ impl<NodeID: Hash + Eq, PortID: Hash + Eq> Port<NodeID, PortID> {
 
         tmp
     }
-
-    #[inline]
-    pub fn is_connected_to_node<Q: Hash + Eq + ?Sized>(&self, id: &Q) -> bool
-    where
-        NodeID: Borrow<Q>,
-    {
-        self.connections()
-            .get(id)
-            .is_some_and(|ports| !ports.is_empty())
-    }
 }
 
-#[derive(Clone, Debug)]
-pub struct Node<NodeID, PortID> {
+#[derive(Clone, Debug, Default)]
+pub struct Node {
     pub latency: u64,
-    backward_port_ids: FnvHashSet<PortID>,
-    forward_ports: FnvHashMap<PortID, Port<NodeID, PortID>>,
+    output_ids: FnvHashSet<OutputID>,
+    inputs: FnvHashMap<InputID, Input>,
 }
 
-impl<NodeID, PortID> Default for Node<NodeID, PortID> {
-    fn default() -> Self {
+impl Node {
+    fn with_reversed_io_layout(&self) -> Self {
         Self {
-            latency: Default::default(),
-            backward_port_ids: Default::default(),
-            forward_ports: Default::default(),
-        }
-    }
-}
-
-impl<NodeID, PortID: Hash + Eq> Node<NodeID, PortID> {
-    fn new(
-        latency: u64,
-        backward_port_ids: impl IntoIterator<Item = PortID>,
-        forward_port_ids: impl IntoIterator<Item = PortID>,
-    ) -> Self {
-        Self {
-            latency,
-            backward_port_ids: backward_port_ids.into_iter().collect(),
-            forward_ports: forward_port_ids
-                .into_iter()
-                .map(|id| (id, Port::default()))
+            latency: self.latency,
+            output_ids: self
+                .inputs
+                .keys()
+                .cloned()
+                .map(|InputID(id)| OutputID(id))
+                .collect(),
+            inputs: self
+                .output_ids
+                .iter()
+                .map(|id| (InputID(id.clone().0), Input::default()))
                 .collect(),
         }
     }
 
-    fn with_reversed_io_layout(&self) -> Self
-    where
-        NodeID: Clone,
-        PortID: Clone,
-    {
-        Self::new(
-            self.latency,
-            self.forward_ports.keys().cloned(),
-            self.backward_port_ids.iter().cloned(),
-        )
+    #[inline]
+    pub fn get_input_mut(&mut self, id: &InputID) -> Option<&mut Input> {
+        self.inputs.get_mut(id)
     }
 
     #[inline]
-    pub fn get_forward_port_mut<Q: Hash + Eq + ?Sized>(
-        &mut self,
-        id: &Q,
-    ) -> Option<&mut Port<NodeID, PortID>>
-    where
-        PortID: Borrow<Q>,
-    {
-        self.forward_ports.get_mut(id)
-    }
-
-    #[inline]
-    pub fn add_forward_port(&mut self, id: PortID) -> Result<&mut Port<NodeID, PortID>, PortID> {
-        match self.forward_ports.entry(id) {
-            Entry::Occupied(e) => Ok(e.into_mut()),
-            Entry::Vacant(e) => Err(e.into_key()),
-        }
-    }
-
-    #[inline]
-    pub fn add_backward_port(&mut self, id: PortID) -> Result<(), PortID> {
-        if let Some(_) = self.backward_port_ids.get(&id) {
-            return Err(id);
+    pub fn add_input(&mut self) -> InputID {
+        for id in (0..).into_iter().map(InputID) {
+            if !self.inputs.contains_key(&id) {
+                self.inputs.insert(id.clone(), Input::default());
+                return id;
+            }
         }
 
-        self.backward_port_ids.insert(id);
-        Ok(())
-    }
-}
-
-impl<NodeID, PortID> Node<NodeID, PortID> {
-    #[inline]
-    pub fn forward_ports(&self) -> &FnvHashMap<PortID, Port<NodeID, PortID>> {
-        &self.forward_ports
+        panic!("Index overflow")
     }
 
     #[inline]
-    pub fn backward_port_ids(&self) -> &FnvHashSet<PortID> {
-        &self.backward_port_ids
+    pub fn remove_input(&mut self, id: &InputID) -> Option<Input> {
+        self.inputs.remove(id)
     }
-}
 
-#[derive(Debug)]
-struct BufferAllocator<NodeID, PortID> {
-    buffers: FnvHashMap<(NodeID, PortID), usize>,
-    ports: Vec<FnvHashSet<(NodeID, PortID)>>,
-}
-
-impl<NodeID, PortID> Default for BufferAllocator<NodeID, PortID> {
-    fn default() -> Self {
-        Self {
-            buffers: Default::default(),
-            ports: Default::default(),
+    #[inline]
+    pub fn add_output(&mut self) -> OutputID {
+        for id in (0..).into_iter().map(OutputID) {
+            if !self.output_ids.contains(&id) {
+                self.output_ids.insert(id.clone());
+                return id;
+            }
         }
+
+        panic!("Index overflow")
     }
 }
 
-impl<NodeID, PortID> BufferAllocator<NodeID, PortID> {
+impl Node {
+    #[inline]
+    pub fn inputs(&self) -> &FnvHashMap<InputID, Input> {
+        &self.inputs
+    }
+
+    #[inline]
+    pub fn output_ids(&self) -> &FnvHashSet<OutputID> {
+        &self.output_ids
+    }
+}
+
+#[derive(Debug, Default)]
+struct BufferAllocator {
+    buffers: FnvHashMap<(NodeID, InputID), usize>,
+    ports: Vec<FnvHashSet<(NodeID, InputID)>>,
+}
+
+impl BufferAllocator {
     fn len(&self) -> usize {
         self.ports.len()
     }
 
-    fn get_empty_set_index<T>(list: &mut Vec<FnvHashSet<T>>) -> usize {
-        list.iter()
-            .enumerate()
-            .find_map(|(i, port_idxs)| port_idxs.is_empty().then_some(i))
-            .unwrap_or_else(|| {
-                let tmp = list.len();
-                list.push(FnvHashSet::default());
-                tmp
-            })
-    }
-
     fn get_free(&mut self) -> usize {
-        Self::get_empty_set_index(&mut self.ports)
+        fn get_or_insert_empty_set_index<T>(list: &mut Vec<FnvHashSet<T>>) -> usize {
+            list.iter()
+                .enumerate()
+                .find_map(|(i, port_idxs)| port_idxs.is_empty().then_some(i))
+                .unwrap_or_else(|| {
+                    let tmp = list.len();
+                    list.push(FnvHashSet::default());
+                    tmp
+                })
+        }
+
+        get_or_insert_empty_set_index(&mut self.ports)
     }
 }
 
-impl<NodeID: Hash + Eq, PortID: Hash + Eq> BufferAllocator<NodeID, PortID> {
+impl BufferAllocator {
     fn claim(
         &mut self,
         buffer_index: usize,
-        ports: FnvHashSet<(NodeID, PortID)>,
-    ) -> FnvHashSet<(NodeID, PortID)>
-    where
-        NodeID: Clone,
-        PortID: Clone,
-    {
+        ports: FnvHashSet<(NodeID, InputID)>,
+    ) -> FnvHashSet<(NodeID, InputID)> {
         let port_idxs = &mut self.ports[buffer_index];
 
         assert!(
@@ -221,7 +174,7 @@ impl<NodeID: Hash + Eq, PortID: Hash + Eq> BufferAllocator<NodeID, PortID> {
             .collect()
     }
 
-    fn remove_claim(&mut self, port: &(NodeID, PortID)) -> usize {
+    fn remove_claim(&mut self, port: &(NodeID, InputID)) -> usize {
         let i = self.buffers.remove(port).unwrap();
 
         assert!(
@@ -236,12 +189,12 @@ impl<NodeID: Hash + Eq, PortID: Hash + Eq> BufferAllocator<NodeID, PortID> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Task<NodeID, PortID> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Task {
     Node {
         id: NodeID,
-        inputs: FnvHashMap<PortID, usize>,
-        outputs: FnvHashMap<PortID, usize>,
+        inputs: FnvHashMap<InputID, usize>,
+        outputs: FnvHashMap<OutputID, usize>,
     },
     Sum {
         left: usize,
@@ -250,46 +203,12 @@ pub enum Task<NodeID, PortID> {
     },
 }
 
-impl<NodeID: PartialEq, PortID: Hash + Eq> PartialEq for Task<NodeID, PortID> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (
-                Self::Node {
-                    id: l_id,
-                    inputs: l_inputs,
-                    outputs: l_outputs,
-                },
-                Self::Node {
-                    id: r_id,
-                    inputs: r_inputs,
-                    outputs: r_outputs,
-                },
-            ) => l_id == r_id && l_inputs == r_inputs && l_outputs == r_outputs,
-            (
-                Self::Sum {
-                    left: l_left,
-                    right: l_right,
-                    output: l_output,
-                },
-                Self::Sum {
-                    left: r_left,
-                    right: r_right,
-                    output: r_output,
-                },
-            ) => l_left == r_left && l_right == r_right && l_output == r_output,
-            _ => false,
-        }
-    }
-}
-
-impl<NodeID: Eq, PortID: Hash + Eq> Eq for Task<NodeID, PortID> {}
-
-impl<NodeID, PortID: Hash + Eq> Task<NodeID, PortID> {
+impl Task {
     #[inline]
     pub fn node(
         index: NodeID,
-        inputs: impl IntoIterator<Item = (PortID, usize)>,
-        outputs: impl IntoIterator<Item = (PortID, usize)>,
+        inputs: impl IntoIterator<Item = (InputID, usize)>,
+        outputs: impl IntoIterator<Item = (OutputID, usize)>,
     ) -> Self {
         Self::Node {
             id: index,
@@ -309,14 +228,14 @@ impl<NodeID, PortID: Hash + Eq> Task<NodeID, PortID> {
 }
 
 #[derive(Debug)]
-struct Scheduler<NodeID, PortID> {
-    transposed: AudioGraph<NodeID, PortID>,
+struct Scheduler {
+    transposed: AudioGraph,
     process_order: Vec<NodeID>,
 }
 
-impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> Scheduler<NodeID, PortID> {
-    fn compile(self) -> (usize, Vec<Task<NodeID, PortID>>) {
-        let mut allocator = BufferAllocator::<NodeID, PortID>::default();
+impl Scheduler {
+    fn compile(self) -> (usize, Vec<Task>) {
+        let mut allocator = BufferAllocator::default();
         let mut schedule = vec![];
 
         let Self {
@@ -324,26 +243,24 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> Scheduler<NodeID, Por
             process_order,
         } = self;
 
-        for id in process_order {
-            let proc = transposed.get_node_mut(&id).unwrap();
+        for node_id in process_order {
+            let node = transposed.get_node_mut(&node_id).unwrap();
 
-            let inputs = proc
-                .backward_port_ids()
+            let inputs = node
+                .output_ids()
                 .iter()
-                .map(|port_id| {
-                    (
-                        port_id.clone(),
-                        allocator.remove_claim(&(id.clone(), port_id.clone())),
-                    )
+                .map(|OutputID(id)| {
+                    let id = InputID(id.clone());
+                    (id.clone(), allocator.remove_claim(&(node_id.clone(), id)))
                 })
                 .collect();
 
-            let outputs = proc
-                .forward_ports
+            let outputs = node
+                .inputs()
                 .iter()
-                .map(|(id, port)| {
+                .map(|(InputID(id), port)| {
                     (
-                        id.clone(),
+                        OutputID(id.clone()),
                         if port.connections().is_empty() {
                             usize::MAX
                         } else {
@@ -354,19 +271,19 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> Scheduler<NodeID, Por
                 .collect();
 
             schedule.push(Task::Node {
-                id,
+                id: node_id,
                 inputs,
                 outputs,
             });
 
             let Some(Task::Node { outputs, .. }) = schedule.last() else {
-                unreachable!("huh??")
+                panic!()
             };
 
             for (buf_index, port) in outputs
                 .clone()
                 .into_values()
-                .zip(proc.forward_ports.values_mut())
+                .zip(node.inputs.values_mut())
                 .filter(|(i, _)| i != &usize::MAX)
             {
                 for port_idx in allocator.claim(
@@ -374,7 +291,9 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> Scheduler<NodeID, Por
                     port.connections()
                         .iter()
                         .flat_map(|(node, ports)| {
-                            ports.iter().map(move |p| (node.clone(), p.clone()))
+                            ports
+                                .iter()
+                                .map(move |p| (node.clone(), InputID(p.clone().0)))
                         })
                         .collect(),
                 ) {
@@ -400,51 +319,35 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> Scheduler<NodeID, Por
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct AudioGraph<NodeID, PortID> {
-    nodes: FnvHashMap<NodeID, Node<NodeID, PortID>>,
+#[derive(Clone, Debug, Default)]
+pub struct AudioGraph {
+    nodes: FnvHashMap<NodeID, Node>,
 }
 
-impl<NodeID, PortID> Default for AudioGraph<NodeID, PortID> {
+impl Index<&NodeID> for AudioGraph {
+    type Output = Node;
     #[inline]
-    fn default() -> Self {
-        Self {
-            nodes: Default::default(),
-        }
-    }
-}
-
-impl<NodeID: Borrow<Q> + Eq + Hash, Q: ?Sized + Eq + Hash, PortID> Index<&Q>
-    for AudioGraph<NodeID, PortID>
-{
-    type Output = Node<NodeID, PortID>;
-    #[inline]
-    fn index(&self, key: &Q) -> &Self::Output {
+    fn index(&self, key: &NodeID) -> &Self::Output {
         self.get_node(key).expect("no node found for this id")
     }
 }
 
-impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> AudioGraph<NodeID, PortID> {
+impl AudioGraph {
     #[inline]
-    fn insert_opposite_ports(
-        &mut self,
-        transposed: &Self,
-        node_index: &NodeID,
-        processed: &mut Vec<NodeID>,
-    ) {
+    fn fill_inputs(&mut self, transposed: &Self, node_index: &NodeID, processed: &mut Vec<NodeID>) {
         if processed.contains(node_index) {
             return;
         }
 
         let node = transposed.get_node(node_index).unwrap();
 
-        for (id, port) in node.forward_ports().iter() {
-            let connections = port.connections();
+        for (output_id, input) in node.inputs().iter() {
+            let output_id = OutputID(output_id.clone().0);
 
-            for (node_idx, port_indices) in connections.iter() {
-                self.insert_opposite_ports(transposed, node_idx, processed);
+            for (node_idx, port_indices) in input.connections().iter() {
+                self.fill_inputs(transposed, node_idx, processed);
 
-                for port_idx in port_indices {
+                for input_id in port_indices.iter().cloned().map(|OutputID(id)| InputID(id)) {
                     let node = if let Some(node) = self.get_node_mut(node_idx) {
                         node
                     } else {
@@ -455,18 +358,16 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> AudioGraph<NodeID, Po
                                 .unwrap()
                                 .with_reversed_io_layout(),
                         ) else {
-                            unreachable!(
-                                "Hash and Eq implementations for NodeID might be inconsistent"
-                            );
+                            unreachable!("inconsistent Hash and Eq implementations for NodeID?");
                         };
 
                         node
                     };
 
                     let new = node
-                        .get_forward_port_mut(port_idx)
+                        .get_input_mut(&input_id)
                         .unwrap()
-                        .insert_port((node_index.clone(), id.clone()));
+                        .insert_output((node_index.clone(), output_id.clone()));
 
                     assert!(new, "INTERNAL ERRROR: port must be newly inserted");
                 }
@@ -477,22 +378,19 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> AudioGraph<NodeID, Po
     }
 
     #[inline]
-    fn scheduler(&self, root_nodes: FnvHashSet<NodeID>) -> Scheduler<NodeID, PortID> {
+    fn scheduler(&self, root_nodes: FnvHashSet<NodeID>) -> Scheduler {
         let mut transposed = Self::default();
 
         let mut process_order = vec![];
 
         for node_idx in root_nodes {
-            assert!(
-                transposed
-                    .try_insert_node(
-                        node_idx.clone(),
-                        self.get_node(&node_idx).unwrap().with_reversed_io_layout()
-                    )
-                    .is_ok(),
-                "Hash and Eq implementations for NodeID might be inconsistent"
-            );
-            transposed.insert_opposite_ports(self, &node_idx, &mut process_order);
+            assert!(transposed
+                .try_insert_node(
+                    node_idx.clone(),
+                    self.get_node(&node_idx).unwrap().with_reversed_io_layout()
+                )
+                .is_ok(),);
+            transposed.fill_inputs(self, &node_idx, &mut process_order);
         }
 
         Scheduler {
@@ -501,52 +399,42 @@ impl<NodeID: Hash + Eq + Clone, PortID: Hash + Eq + Clone> AudioGraph<NodeID, Po
         }
     }
 
-    /// # Panics
-    ///
-    /// If any of first `num_root_nodes` nodes of the graph must have more than 1 input,
-    /// or if an internal error occured
     #[inline]
-    pub fn compile(
-        &self,
-        root_nodes: impl IntoIterator<Item = NodeID>,
-    ) -> (usize, Vec<Task<NodeID, PortID>>) {
+    pub fn compile(&self, root_nodes: impl IntoIterator<Item = NodeID>) -> (usize, Vec<Task>) {
         self.scheduler(FnvHashSet::from_iter(root_nodes)).compile()
     }
 }
 
-impl<NodeID: Hash + Eq, PortID> AudioGraph<NodeID, PortID> {
+impl AudioGraph {
     #[inline]
     #[must_use]
     pub fn try_insert_edge(
         &mut self,
-        from: (NodeID, PortID),
-        to: (NodeID, PortID),
-    ) -> Result<bool, bool>
-    where
-        PortID: Hash + Eq,
-    {
+        from: (NodeID, OutputID),
+        to: (NodeID, InputID),
+    ) -> Result<bool, bool> {
         // If either of the ports don't exist, error out
         if self
-            .get_node(&from.0)
-            .and_then(|node| node.forward_ports().get(&from.1))
+            .get_node(&to.0)
+            .and_then(|node| node.inputs().get(&to.1))
             .is_none()
             || self
-                .get_node(&to.0)
-                .map_or(true, |node| !node.backward_port_ids().contains(&to.1))
+                .get_node(&from.0)
+                .map_or(true, |node| !node.output_ids().contains(&from.1))
         {
             return Err(false);
         }
 
-        if self.is_connected(&to.0, &from.0) {
+        if self.is_connected(&from.0, &to.0) {
             return Err(true);
         }
 
         Ok(self
-            .get_node_mut(&from.0)
+            .get_node_mut(&to.0)
             .unwrap()
-            .get_forward_port_mut(&from.1)
+            .get_input_mut(&to.1)
             .unwrap()
-            .insert_port(to))
+            .insert_output(from))
     }
 
     /// # Panics
@@ -557,7 +445,7 @@ impl<NodeID: Hash + Eq, PortID> AudioGraph<NodeID, PortID> {
             return true;
         }
 
-        for port in self.get_node(from).unwrap().forward_ports().values() {
+        for port in self.get_node(from).unwrap().inputs().values() {
             for node in port.connections().keys() {
                 if self.is_connected(node, to) {
                     return true;
@@ -569,49 +457,28 @@ impl<NodeID: Hash + Eq, PortID> AudioGraph<NodeID, PortID> {
     }
 
     #[inline]
-    pub fn get_node<Q: Hash + Eq + ?Sized>(&self, index: &Q) -> Option<&Node<NodeID, PortID>>
-    where
-        NodeID: Borrow<Q>,
-    {
+    pub fn get_node(&self, index: &NodeID) -> Option<&Node> {
         self.nodes.get(index)
     }
 
     #[inline]
-    pub fn get_node_mut<Q: Hash + Eq + ?Sized>(
-        &mut self,
-        index: &Q,
-    ) -> Option<&mut Node<NodeID, PortID>>
-    where
-        NodeID: Borrow<Q>,
-    {
+    pub fn get_node_mut(&mut self, index: &NodeID) -> Option<&mut Node> {
         self.nodes.get_mut(index)
     }
 
     #[inline]
-    pub fn try_insert_node(
-        &mut self,
-        id: NodeID,
-        node: Node<NodeID, PortID>,
-    ) -> Result<&mut Node<NodeID, PortID>, Node<NodeID, PortID>> {
+    fn try_insert_node(&mut self, id: NodeID, node: Node) -> Result<&mut Node, (&mut Node, Node)> {
         match self.nodes.entry(id) {
-            Entry::Occupied(_) => Err(node),
+            Entry::Occupied(e) => Err((e.into_mut(), node)),
             Entry::Vacant(e) => Ok(e.insert(node)),
         }
     }
-}
 
-impl<PortID: Hash + Eq> AudioGraph<u64, PortID> {
     #[inline]
-    pub fn insert_node_id(
-        &mut self,
-        latency: u64,
-        backward_port_ids: impl IntoIterator<Item = PortID>,
-        forward_port_ids: impl IntoIterator<Item = PortID>,
-    ) -> u64 {
-        for i in 0.. {
+    pub fn insert_node(&mut self, node: Node) -> NodeID {
+        for i in (0..).into_iter().map(NodeID) {
             if !self.nodes.contains_key(&i) {
-                let _ = self
-                    .try_insert_node(i, Node::new(latency, backward_port_ids, forward_port_ids));
+                self.nodes.insert(i.clone(), node);
                 return i;
             }
         }

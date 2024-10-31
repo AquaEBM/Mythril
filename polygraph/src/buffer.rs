@@ -18,21 +18,21 @@ pub struct ReadOnly<T: ?Sized>(Cell<T>);
 
 impl<T: ?Sized> ReadOnly<T> {
     #[inline]
-    pub fn from_cell_ref(cell: &Cell<T>) -> &Self {
+    pub fn from_ref(cell: &Cell<T>) -> &Self {
         unsafe { mem::transmute(cell) }
     }
 }
 
 impl<T> ReadOnly<[T]> {
     #[inline]
-    pub fn transpose(&self) -> &[ReadOnly<T>] {
+    pub fn as_slice(&self) -> &[ReadOnly<T>] {
         unsafe { mem::transmute(self) }
     }
 }
 
 impl<T, const N: usize> ReadOnly<[T; N]> {
     #[inline]
-    pub fn transpose(&self) -> &[ReadOnly<T>; N] {
+    pub fn as_array(&self) -> &[ReadOnly<T>; N] {
         unsafe { mem::transmute(self) }
     }
 }
@@ -60,7 +60,7 @@ impl<T> ReadOnly<T> {
 impl<T: SimdElement> ReadOnly<Simd<T, FLOATS_PER_VECTOR>> {
     #[inline]
     pub fn split_stereo(&self) -> &ReadOnly<[Simd<T, 2>; STEREO_VOICES_PER_VECTOR]> {
-        ReadOnly::from_cell_ref(split_stereo_cell(&self.0))
+        ReadOnly::from_ref(split_stereo_cell(&self.0))
     }
 }
 
@@ -77,13 +77,26 @@ pub type Buffer<T> = Box<Cell<[T]>>;
 ///
 /// All bit patterns for type `T` must be valid,
 #[inline]
-pub(crate) unsafe fn new_owned_buffer<T>(len: usize) -> Buffer<T> {
+#[must_use]
+pub unsafe fn new_owned_buffer<T>(len: usize) -> Buffer<T> {
     // SAFETY: Cell<T> has the same layout as T, thus, by extension, Cell<[T]>
     // has the same layout as [T] + garantee specified in the doc
     mem::transmute(Box::<[T]>::new_uninit_slice(len).assume_init())
 }
 
+/// # Safety
+///
+/// `T` must be safely zeroable
 #[inline]
+#[must_use]
+pub unsafe fn new_owned_buffer_zeroed<T>(len: usize) -> Buffer<T> {
+    // SAFETY: Cell<T> has the same layout as T, thus, by extension, Cell<[T]>
+    // has the same layout as [T] + garantee specified in the doc
+    mem::transmute(Box::<[T]>::new_zeroed_slice(len).assume_init())
+}
+
+#[inline]
+#[must_use]
 pub fn new_vfloat_buffer<T: SimdFloat>(len: usize) -> Buffer<T> {
     // SAFETY: `f32`s and 'f64's (and thus `Simd<f32, N>`s and `Simd<f64, N>`s,
     // the only implementors of `SimdFloat`) can be initialized with any bit pattern
@@ -98,8 +111,9 @@ pub struct BufferList<T, U> {
 impl<T, U> BufferList<T, U> {
     /// # Safety
     ///
-    /// All bit patterns for type `U` must be valid
+    /// All bit patterns for type `T` must be valid
     #[inline]
+    #[must_use]
     pub unsafe fn new_with(
         num_buffers: usize,
         buf_len: NonZeroUsize,
@@ -115,8 +129,27 @@ impl<T, U> BufferList<T, U> {
 
     /// # Safety
     ///
-    /// All bit patterns for type `U` must be valid
+    /// `T` must be safely zeroable
     #[inline]
+    #[must_use]
+    pub unsafe fn new_zeroed_with(
+        num_buffers: usize,
+        buf_len: NonZeroUsize,
+        mut f: impl FnMut() -> U,
+    ) -> Self {
+        Self {
+            buffers: iter::repeat_with(|| (new_owned_buffer_zeroed(buf_len.get()), Cell::new(f())))
+                .take(num_buffers)
+                .collect(),
+            buf_len,
+        }
+    }
+
+    /// # Safety
+    ///
+    /// All bit patterns for type `T` must be valid
+    #[inline]
+    #[must_use]
     pub unsafe fn new_default(num_buffers: usize, buf_len: NonZeroUsize) -> Self
     where
         U: Default,
@@ -124,22 +157,16 @@ impl<T, U> BufferList<T, U> {
         unsafe { Self::new_with(num_buffers, buf_len, U::default) }
     }
 
+    /// # Safety
+    ///
+    /// `T` must be safely zeroable
     #[inline]
-    pub fn new_vfloat_with(
-        num_buffers: usize,
-        buf_len: NonZeroUsize,
-        f: impl FnMut() -> U,
-    ) -> Self {
-        // SAFETY: T: SimdFloat so all bit patterns for T are valid
-        unsafe { Self::new_with(num_buffers, buf_len, f) }
-    }
-
-    #[inline]
-    pub fn new_vfloat_default(num_buffers: usize, buf_len: NonZeroUsize) -> Self
+    #[must_use]
+    pub unsafe fn new_default_zeroed(num_buffers: usize, buf_len: NonZeroUsize) -> Self
     where
         U: Default,
     {
-        unsafe { Self::new_default(num_buffers, buf_len) }
+        unsafe { Self::new_zeroed_with(num_buffers, buf_len, U::default) }
     }
 
     #[inline]
@@ -163,6 +190,48 @@ impl<T, U> BufferList<T, U> {
             start,
             len,
         })
+    }
+}
+
+impl<T: SimdFloat, U> BufferList<T, U> {
+    #[inline]
+    #[must_use]
+    pub fn new_vfloat_with(
+        num_buffers: usize,
+        buf_len: NonZeroUsize,
+        f: impl FnMut() -> U,
+    ) -> Self {
+        // SAFETY: T: SimdFloat so all bit patterns for T are valid
+        unsafe { Self::new_with(num_buffers, buf_len, f) }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn new_vfloat_zeroed_with(
+        num_buffers: usize,
+        buf_len: NonZeroUsize,
+        f: impl FnMut() -> U,
+    ) -> Self {
+        // SAFETY: T: SimdFloat so T is safely zeroable
+        unsafe { Self::new_zeroed_with(num_buffers, buf_len, f) }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn new_vfloat_default(num_buffers: usize, buf_len: NonZeroUsize) -> Self
+    where
+        U: Default,
+    {
+        // SAFETY: T: SimdFloat so all bit patterns for T are valid
+        unsafe { Self::new_default(num_buffers, buf_len) }
+    }
+
+    pub fn new_vfloat_zeroed_default(num_buffers: usize, buf_len: NonZeroUsize) -> Self
+    where
+        U: Default,
+    {
+        // SAFETY: T: SimdFloat so T is safely zeroable
+        unsafe { Self::new_default_zeroed(num_buffers, buf_len) }
     }
 }
 
@@ -268,7 +337,7 @@ impl<'a, T: SimdFloat> Buffers<'a, T> {
         Ok(self
             .buffers
             .get(index)
-            .map(|(buf, mask)| (ReadOnly::from_slice(buf), ReadOnly::from_cell_ref(mask)))
+            .map(|(buf, mask)| (ReadOnly::from_slice(buf), ReadOnly::from_ref(mask)))
             .unwrap())
     }
 
