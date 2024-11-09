@@ -24,8 +24,8 @@ pub const MAX_VECTOR_WIDTH: usize = {
 
 pub const FLOATS_PER_VECTOR: usize = MAX_VECTOR_WIDTH / size_of::<f32>();
 
-pub type Float<const N: usize = FLOATS_PER_VECTOR> = Simd<f32, N>;
-pub type UInt<const N: usize = FLOATS_PER_VECTOR> = Simd<u32, N>;
+pub type VFloat<const N: usize = FLOATS_PER_VECTOR> = Simd<f32, N>;
+pub type VUInt<const N: usize = FLOATS_PER_VECTOR> = Simd<u32, N>;
 pub type TMask<const N: usize = FLOATS_PER_VECTOR> = Mask<i32, N>;
 
 /// Convenience function on simd types when specialized functions aren't
@@ -65,15 +65,18 @@ where
 #[inline]
 pub unsafe fn gather_select_unchecked(
     pointer: *const f32,
-    index: UInt,
+    index: VUInt,
     enable: TMask,
-    or: Float,
-) -> Float {
+    or: VFloat,
+) -> VFloat {
     cfg_if! {
 
         if #[cfg(target_feature = "avx512f")] {
 
             #[cfg(feature = "non_std_simd")]
+            // this is safe because, in core_simd, the mask type is implemented as a bitmask on AVX-512
+            // This obviously doesn't work when importing it directly from the standard library, as it
+            // is precompiled with specific compilation options (that don't enable AVX-512)
             let bitmask = transmute(enable);
             #[cfg(not(feature = "non_std_simd"))]
             let bitmask = enable.to_bitmask() as __mmask16;
@@ -110,7 +113,7 @@ pub unsafe fn gather_select_unchecked(
 ///
 /// The same as `Simd::gather_select_unchecked`
 #[inline]
-pub unsafe fn gather_unchecked(pointer: *const f32, index: UInt) -> Float {
+pub unsafe fn gather_unchecked(pointer: *const f32, index: VUInt) -> VFloat {
     cfg_if! {
 
         if #[cfg(target_feature = "avx512f")] {
@@ -128,14 +131,14 @@ pub unsafe fn gather_unchecked(pointer: *const f32, index: UInt) -> Float {
                 slice,
                 Mask::splat(true),
                 index.cast(),
-                Float::splat(0.)
+                VFloat::splat(0.)
             )
         }
     }
 }
 
 #[inline]
-pub fn sum_to_stereo_sample(x: Float) -> f32x2 {
+pub fn sum_to_stereo_sample(x: VFloat) -> f32x2 {
     unsafe {
         cfg_if! {
 
@@ -175,7 +178,7 @@ pub const STEREO_VOICES_PER_VECTOR: usize = FLOATS_PER_VECTOR / 2;
 // Safety argument for the six following functions:
 //  - both referenced types have the same size, more specifically, 2 * STEREO_VOICES_PER_VECTOR
 // is always equal to FLOATS_PER_VECTOR, because it is always a multiple of 2
-//  - the type of `vector(s)` has greater alignment than that of the return type
+//  - the referred-to type of `vector(s)` has greater alignment than that of the return type
 //  - the output reference's lifetime is the same as that of the input, so no unbounded lifetimes
 //  - we are transmuting a vector to an array over the same scalar, so values are valid
 
@@ -262,8 +265,8 @@ pub fn swap_stereo<T: SimdElement>(v: Simd<T, FLOATS_PER_VECTOR>) -> Simd<T, FLO
 
 /// triangluar panning of a vector of stereo samples, given 0 <= pan <= 1
 #[inline]
-pub fn triangular_pan_weights(pan_norm: Float) -> Float {
-    const SIGN_MASK: Float = {
+pub fn triangular_pan_weights(pan_norm: VFloat) -> VFloat {
+    const SIGN_MASK: VFloat = {
         let mut array = [0.; FLOATS_PER_VECTOR];
         let mut i = 0;
         while i < FLOATS_PER_VECTOR {
@@ -273,7 +276,7 @@ pub fn triangular_pan_weights(pan_norm: Float) -> Float {
         Simd::from_array(array)
     };
 
-    const ALT_ONE: Float = {
+    const ALT_ONE: VFloat = {
         let mut array = [0.; FLOATS_PER_VECTOR];
         let mut i = 0;
         while i < FLOATS_PER_VECTOR {
@@ -283,7 +286,7 @@ pub fn triangular_pan_weights(pan_norm: Float) -> Float {
         Simd::from_array(array)
     };
 
-    Float::from_bits(pan_norm.to_bits() ^ SIGN_MASK.to_bits()) + ALT_ONE
+    VFloat::from_bits(pan_norm.to_bits() ^ SIGN_MASK.to_bits()) + ALT_ONE
 }
 
 #[inline]

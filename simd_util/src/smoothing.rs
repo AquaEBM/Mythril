@@ -1,7 +1,7 @@
 use super::{
     math::{exp2, log2, pow},
     simd::{num::SimdFloat, *},
-    Float, TMask, FLOATS_PER_VECTOR,
+    TMask, VFloat, FLOATS_PER_VECTOR,
 };
 
 pub trait Smoother {
@@ -24,8 +24,8 @@ pub struct LogSmoother<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    pub factor: Float<N>,
-    pub value: Float<N>,
+    pub factor: VFloat<N>,
+    pub value: VFloat<N>,
 }
 
 impl<const N: usize> Default for LogSmoother<N>
@@ -45,7 +45,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     #[inline]
-    pub fn scale(&mut self, scale: Float<N>) {
+    pub fn scale(&mut self, scale: VFloat<N>) {
         self.value *= scale;
     }
 }
@@ -54,10 +54,11 @@ impl<const N: usize> Smoother for LogSmoother<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    type Value = Float<N>;
+    type Value = VFloat<N>;
 
     #[inline]
     fn set_target(&mut self, target: Self::Value, t: Self::Value) {
+        // = pow(target / self.value, t.recip())
         self.factor = exp2(log2(target / self.value) / t);
     }
 
@@ -99,8 +100,8 @@ pub struct LinearSmoother<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    pub increment: Float<N>,
-    pub value: Float<N>,
+    pub increment: VFloat<N>,
+    pub value: VFloat<N>,
 }
 
 impl<const N: usize> LinearSmoother<N>
@@ -108,7 +109,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     #[inline]
-    pub fn scale(&mut self, scale: Float<N>) {
+    pub fn scale(&mut self, scale: VFloat<N>) {
         self.value *= scale;
         self.increment *= scale;
     }
@@ -118,7 +119,7 @@ impl<const N: usize> Smoother for LinearSmoother<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    type Value = Float<N>;
+    type Value = VFloat<N>;
 
     #[inline]
     fn set_target(&mut self, target: Self::Value, t: Self::Value) {
@@ -163,8 +164,8 @@ pub struct GenericSmoother<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    pub current: Float<N>,
-    pub target: Float<N>,
+    pub current: VFloat<N>,
+    pub target: VFloat<N>,
 }
 
 impl<const N: usize> GenericSmoother<N>
@@ -172,20 +173,20 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     #[inline]
-    pub fn smooth_exp(&mut self, alpha: Float<N>) {
+    pub fn smooth_exp(&mut self, alpha: VFloat<N>) {
         let y = &mut self.current;
         let x = self.target;
         *y = alpha.mul_add(*y - x, x);
     }
 
     #[inline]
-    pub fn set_val_instantly(&mut self, target: Float<N>, mask: TMask<N>) {
+    pub fn set_val_instantly(&mut self, target: VFloat<N>, mask: TMask<N>) {
         self.target = mask.select(target, self.target);
         self.current = mask.select(target, self.current);
     }
 
     #[inline]
-    pub fn set_target(&mut self, target: Float<N>, mask: TMask<N>) {
+    pub fn set_target(&mut self, target: VFloat<N>, mask: TMask<N>) {
         self.target = mask.select(target, self.target);
     }
 }

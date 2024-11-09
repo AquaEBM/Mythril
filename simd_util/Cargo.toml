@@ -17,7 +17,7 @@ cfg-if = "1"
 
 [features]
 
-default = ["std_simd"]
+default = ["std_simd", "transfer_funcs"]
 core_simd_crate = ["dep:core_simd", "dep:std_float"]
 std_simd = []
 transfer_funcs = ["dep:num"]

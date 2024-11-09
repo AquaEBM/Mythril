@@ -405,10 +405,12 @@ fn mutiple_input_ports() {
             .is_ok_and(id));
     }
 
-    assert!(graph.try_insert_edge(
-        (sink_node_id.clone(), sink_node_output_id.clone()),
-        (master_id.clone(), master_input_id.clone())
-    ).is_ok_and(id));
+    assert!(graph
+        .try_insert_edge(
+            (sink_node_id.clone(), sink_node_output_id.clone()),
+            (master_id.clone(), master_input_id.clone())
+        )
+        .is_ok_and(id));
 
     let (num_buffers, schedule) = graph.compile([master_id.clone()]);
 
@@ -418,7 +420,11 @@ fn mutiple_input_ports() {
         schedule,
         [
             Task::node(source_node_id, [], [(source_node_output_id, 0)]),
-            Task::node(sink_node_id, sink_node_input_ids.map(|id| (id, 0)), [(sink_node_output_id, 0)]),
+            Task::node(
+                sink_node_id,
+                sink_node_input_ids.map(|id| (id, 0)),
+                [(sink_node_output_id, 0)]
+            ),
             Task::node(master_id, [(master_input_id, 0)], []),
         ]
     );
