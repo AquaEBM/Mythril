@@ -3,12 +3,14 @@ use super::*;
 #[cfg_attr(feature = "nih_plug", derive(Enum))]
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Default, PartialOrd, Ord, Hash)]
 pub enum FilterMode {
+    #[cfg_attr(feature = "nih_plug", name = "Passthrough")]
+    #[default]
+    ID,
     #[cfg_attr(feature = "nih_plug", name = "Highpass")]
     HP,
     #[cfg_attr(feature = "nih_plug", name = "Lowpass")]
     LP,
     #[cfg_attr(feature = "nih_plug", name = "Allpass")]
-    #[default]
     AP,
     #[cfg_attr(feature = "nih_plug", name = "Low Shelf")]
     LSH,
@@ -16,16 +18,7 @@ pub enum FilterMode {
     HSH,
 }
 
-pub trait GetOnePoleParams {
-    type Sample;
-    /// let g = tan(w_c / 2), usually shifted when outputting shelving filter types
-    /// g1 = g / (1 + g)
-    fn g1(&self) -> Self::Sample;
-    /// must be greater then 0
-    fn gain(&self) -> Self::Sample;
-}
-
-/// Contains parameters for an analogue one-pole filter, allows 
+/// Contains parameters for an analogue one-pole filter 
 pub struct OnePoleParamsSmoothed<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
@@ -34,25 +27,20 @@ where
     k: LogSmoother<N>,
 }
 
-impl<const N: usize> GetOnePoleParams for OnePoleParamsSmoothed<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    type Sample = VFloat<N>;
-
-    fn g1(&self) -> Self::Sample {
-        self.g1.value
-    }
-
-    fn gain(&self) -> Self::Sample {
-        self.k.value
-    }
-}
-
 impl<const N: usize> OnePoleParamsSmoothed<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
+    #[inline]
+    pub fn get_g1(&self) -> VFloat<N> {
+        self.g1.value
+    }
+
+    #[inline]
+    pub fn get_gain(&self) -> VFloat<N> {
+        self.k.value
+    }
+
     #[inline]
     fn g(w_c: VFloat<N>) -> VFloat<N> {
         math::tan_half_x(w_c)
@@ -163,8 +151,7 @@ pub struct OnePole<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    s: Integrator<N>,
-    lp: VFloat<N>,
+    lp: Integrator<N>,
     x: VFloat<N>,
 }
 
@@ -174,7 +161,7 @@ where
 {
     #[inline]
     pub fn reset(&mut self) {
-        self.s.reset()
+        self.lp.reset()
     }
 
     /// The "`tick`" method, must be called _only once_ per sample, _every sample_.
@@ -185,40 +172,39 @@ where
     /// using `Self::get_{highpass, lowpass, allpass, ...}`
     #[inline]
     pub fn process(&mut self, x: VFloat<N>, g1: VFloat<N>) {
-        let s = self.s.get_current();
 
         self.x = x;
-        self.lp = self.s.tick((x - s) * g1);
+        self.lp.process((x - self.lp.state()) * g1);
     }
 
     #[inline]
-    pub fn get_passthrough(&self) -> VFloat<N> {
-        self.x
+    pub fn get_passthrough(&self) -> &VFloat<N> {
+        &self.x
     }
 
     #[inline]
-    pub fn get_lowpass(&self) -> VFloat<N> {
-        self.lp
+    pub fn get_lowpass(&self) -> &VFloat<N> {
+        self.lp.output()
     }
 
     #[inline]
     pub fn get_allpass(&self) -> VFloat<N> {
-        self.lp - self.get_highpass()
+        self.get_lowpass() - self.get_highpass()
     }
 
     #[inline]
     pub fn get_highpass(&self) -> VFloat<N> {
-        self.x - self.lp
+        self.x - self.get_lowpass()
     }
 
     #[inline]
     pub fn get_low_shelf(&self, gain: VFloat<N>) -> VFloat<N> {
-        gain.mul_add(self.lp, self.get_highpass())
+        gain.mul_add(*self.get_lowpass(), self.get_highpass())
     }
 
     #[inline]
     pub fn get_high_shelf(&self, gain: VFloat<N>) -> VFloat<N> {
-        gain.mul_add(self.get_highpass(), self.lp)
+        gain.mul_add(self.get_highpass(), *self.get_lowpass())
     }
 
     pub fn output_function(
@@ -227,9 +213,10 @@ where
         use FilterMode::*;
 
         match mode {
-            LP => |f, _s| f.get_lowpass(),
-            AP => |f, _s| f.get_allpass(),
-            HP => |f, _s| f.get_highpass(),
+            ID => |f, _g| *f.get_passthrough(),
+            LP => |f, _g| *f.get_lowpass(),
+            AP => |f, _g| f.get_allpass(),
+            HP => |f, _g| f.get_highpass(),
             LSH => Self::get_low_shelf,
             HSH => Self::get_high_shelf,
         }
@@ -238,6 +225,7 @@ where
 
 #[cfg(feature = "transfer_funcs")]
 pub mod transfer {
+
     use super::*;
 
     pub fn transfer_function<T: Float>(
@@ -246,6 +234,7 @@ pub mod transfer {
         use FilterMode::*;
 
         match filter_mode {
+            ID => |s, _g| s,
             LP => |s, _g| low_pass(s),
             AP => |s, _g| all_pass(s),
             HP => |s, _g| high_pass(s),

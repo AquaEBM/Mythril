@@ -29,6 +29,7 @@ where
     LaneCount<N>: SupportedLaneCount,
 {
     s: VFloat<N>,
+    out: VFloat<N>
 }
 
 impl<const N: usize> Integrator<N>
@@ -39,10 +40,14 @@ where
     /// update the system's internal state (`v[n]`),
     /// and return the system's next output (`y[n]`)
     #[inline]
-    pub fn tick(&mut self, x: VFloat<N>) -> VFloat<N> {
-        let output = x + self.s;
-        self.s = output + x;
-        output
+    pub fn process(&mut self, x: VFloat<N>) {
+        self.out = x + self.s;
+        self.s = self.out + x;
+    }
+
+    #[inline]
+    pub fn output(&self) -> &VFloat<N> {
+        &self.out
     }
 
     /// Set the internal `v[n]` state to `0.0`
@@ -53,7 +58,7 @@ where
 
     /// Get the current `v[n]` state
     #[inline]
-    pub fn get_current(&self) -> &VFloat<N> {
+    pub fn state(&self) -> &VFloat<N> {
         &self.s
     }
 }

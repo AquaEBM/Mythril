@@ -3,6 +3,9 @@ use super::*;
 #[cfg_attr(feature = "nih_plug", derive(Enum))]
 #[derive(PartialEq, Eq, Clone, Copy, Debug, Default, PartialOrd, Ord, Hash)]
 pub enum FilterMode {
+    #[cfg_attr(feature = "nih_plug", name = "Passthrough")]
+    #[default]
+    ID,
     #[cfg_attr(feature = "nih_plug", name = "Lowpass")]
     LP,
     #[cfg_attr(feature = "nih_plug", name = "Bandpass")]
@@ -12,7 +15,6 @@ pub enum FilterMode {
     #[cfg_attr(feature = "nih_plug", name = "Highpass")]
     HP,
     #[cfg_attr(feature = "nih_plug", name = "Allpass")]
-    #[default]
     AP,
     #[cfg_attr(feature = "nih_plug", name = "Notch")]
     NCH,
@@ -24,17 +26,6 @@ pub enum FilterMode {
     HSH,
 }
 
-pub trait SVFParams {
-    type Sample;
-    /// `g = tan(w_c / 2)`, potentially shifted when outuputting shelving filter shapes
-    /// where `w_c` is the cutoff frequency, in radians per sample.
-    fn g(&self) -> Self::Sample;
-    /// Resonance value at the cutoff, must be greater than 0
-    fn res(&self) -> Self::Sample;
-    /// Square root of the shelving gain (if applicable), must be greater than 0
-    fn root_gain(&self) -> Self::Sample;
-}
-
 pub struct SVFParamsSmoothed<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
@@ -44,32 +35,25 @@ where
     k: LogSmoother<N>,
 }
 
-impl<const N: usize> SVFParams for SVFParamsSmoothed<N>
-where
-    LaneCount<N>: SupportedLaneCount,
-{
-    type Sample = VFloat<N>;
-
-    #[inline]
-    fn g(&self) -> Self::Sample {
-        self.g.value
-    }
-
-    #[inline]
-    fn res(&self) -> Self::Sample {
-        self.r.value
-    }
-
-    #[inline]
-    fn root_gain(&self) -> Self::Sample {
-        self.k.value
-    }
-}
-
 impl<const N: usize> SVFParamsSmoothed<N>
 where
     LaneCount<N>: SupportedLaneCount,
 {
+    #[inline]
+    pub fn get_g(&self) -> VFloat<N> {
+        self.g.value
+    }
+
+    #[inline]
+    pub fn get_res(&self) -> VFloat<N> {
+        self.r.value
+    }
+
+    #[inline]
+    pub fn get_root_gain(&self) -> VFloat<N> {
+        self.k.value
+    }
+
     #[inline]
     fn g(w_c: VFloat<N>) -> VFloat<N> {
         math::tan_half_x(w_c)
@@ -219,9 +203,8 @@ where
     }
 }
 
-/// Digital implementation of the analogue SVF Filter, with built-in
-/// parameter smoothing. Based on the one in the book The Art of VA
-/// Filter Design by Vadim Zavalishin
+/// Digital implementation of the analogue SVF Filter. Based on the
+/// one in the book The Art of VA Filter Design by Vadim Zavalishin
 ///
 /// Capable of outputing many different filter types,
 /// (highpass, lowpass, bandpass, notch, shelving....)
@@ -230,11 +213,11 @@ pub struct SVF<const N: usize = FLOATS_PER_VECTOR>
 where
     LaneCount<N>: SupportedLaneCount,
 {
-    s: [Integrator<N>; 2],
     x: VFloat<N>,
     hp: VFloat<N>,
-    bp: VFloat<N>,
-    lp: VFloat<N>,
+    bp: Integrator<N>,
+    bp1: VFloat<N>,
+    lp: Integrator<N>,
 }
 
 impl<const N: usize> SVF<N>
@@ -243,7 +226,9 @@ where
 {
     #[inline]
     pub fn reset(&mut self) {
-        self.s.iter_mut().for_each(Integrator::reset)
+        for i in [&mut self.bp, &mut self.lp] {
+            i.reset();
+        }
     }
 
     /// Update the filter's internal state.
@@ -259,109 +244,110 @@ where
         g: VFloat<N>,
         res: VFloat<N>,
     ) {
-        let [&s1, &s2] = self.s.each_ref().map(Integrator::get_current);
+        self.x = x;
+        let &bp_s = self.bp.state();
+        let &lp_s = self.lp.state();
 
         let g1 = res + g;
 
-        self.hp = g1.mul_add(-s1, x - s2) / g1.mul_add(g, Simd::splat(1.));
+        self.hp = g1.mul_add(-bp_s, self.x - lp_s) / g1.mul_add(g, Simd::splat(1.));
 
-        let [s1, s2] = &mut self.s;
-
-        self.x = x;
-        self.bp = s1.tick(self.hp * g);
-        self.lp = s2.tick(self.bp * g);
+        self.bp.process(self.hp * g);
+        let &bp = self.bp.output();
+        self.bp1 = bp * res;
+        self.lp.process(bp * g);
     }
 
     #[inline]
-    pub fn get_passthrough(&self) -> VFloat<N> {
-        self.x
+    pub fn get_passthrough(&self) -> &VFloat<N> {
+        &self.x
     }
 
     #[inline]
     pub fn get_lowpass(
         &self,
-    ) -> VFloat<N> {
-        self.lp
+    ) -> &VFloat<N> {
+        self.lp.output()
     }
 
     #[inline]
     pub fn get_bandpass(
         &self,
-    ) -> VFloat<N> {
-        self.bp
+    ) -> &VFloat<N> {
+        self.bp.output()
     }
 
     #[inline]
     pub fn get_unit_bandpass(
         &self,
-        res: VFloat<N>,
-    ) -> VFloat<N> {
-        res * self.bp
+    ) -> &VFloat<N> {
+        &self.bp1
     }
 
     #[inline]
     pub fn get_highpass(
         &self,
-    ) -> VFloat<N> {
-        self.hp
+    ) -> &VFloat<N> {
+        &self.hp
     }
 
     #[inline]
-    pub fn get_allpass(&self, res: VFloat<N>) -> VFloat<N> {
+    pub fn get_allpass(&self) -> VFloat<N> {
         // 2 * bp1 - x
-        res.mul_add(self.bp + self.bp, -self.x)
+        Simd::splat(2.).mul_add(*self.get_unit_bandpass(), -self.x)
     }
 
     #[inline]
-    pub fn get_notch(&self, res: VFloat<N>) -> VFloat<N> {
+    pub fn get_notch(&self) -> VFloat<N> {
         // x - bp1
-        self.bp.mul_add(-res, self.x)
+        self.get_passthrough() - self.get_unit_bandpass()
     }
 
     #[inline]
     pub fn get_high_shelf(
         &self,
-        res: VFloat<N>,
         root_gain: VFloat<N>,
     ) -> VFloat<N> {
-        let m2 = root_gain;
-        let bp1 = self.get_unit_bandpass(res);
-        m2.mul_add(m2.mul_add(self.hp, bp1), self.lp)
+        let &hp = self.get_highpass();
+        let &bp1 = self.get_unit_bandpass();
+        let &lp = self.get_lowpass();
+        root_gain.mul_add(root_gain.mul_add(hp, bp1), lp)
     }
 
     #[inline]
     pub fn get_band_shelf(
         &self,
-        res: VFloat<N>,
         root_gain: VFloat<N>,
     ) -> VFloat<N> {
-        let bp1 = self.get_unit_bandpass(res);
-        bp1.mul_add(root_gain, self.x - bp1)
+        let &bp1 = self.get_unit_bandpass();
+        let &x = self.get_passthrough();
+        bp1.mul_add(root_gain, x - bp1)
     }
 
     #[inline]
     pub fn get_low_shelf(
         &self,
-        res: VFloat<N>,
         root_gain: VFloat<N>,
     ) -> VFloat<N> {
-        let m2 = root_gain;
-        let bp1 = self.get_unit_bandpass(res);
-        m2.mul_add(m2.mul_add(self.lp, bp1), self.hp)
+        let &hp = self.get_highpass();
+        let &bp1 = self.get_unit_bandpass();
+        let &lp = self.get_lowpass();
+        root_gain.mul_add(root_gain.mul_add(lp, bp1), hp)
     }
 
     pub fn get_output_function(
         mode: FilterMode,
-    ) -> fn(&Self, VFloat<N>, VFloat<N>) -> VFloat<N> {
+    ) -> fn(&Self, VFloat<N>) -> VFloat<N> {
         use FilterMode::*;
 
         match mode {
-            LP => |f, _res, _g| f.get_lowpass(),
-            BP => |f, _res, _g| f.get_bandpass(),
-            BP1 => |f, res, _g| f.get_unit_bandpass(res),
-            HP => |f, _res, _g| f.get_highpass(),
-            AP => |f, res, _g| f.get_allpass(res),
-            NCH => |f, res, _g| f.get_notch(res),
+            ID => |f, _g| *f.get_passthrough(),
+            LP => |f, _g| *f.get_lowpass(),
+            BP => |f, _g| *f.get_bandpass(),
+            BP1 => |f, _g| *f.get_unit_bandpass(),
+            HP => |f, _g| *f.get_highpass(),
+            AP => |f, _g| f.get_allpass(),
+            NCH => |f, _g| f.get_notch(),
             LSH => Self::get_low_shelf,
             BSH => Self::get_band_shelf,
             HSH => Self::get_high_shelf,
@@ -381,6 +367,7 @@ pub mod impedence {
 
         match filter_mode {
             // yay function pointer coercions
+            ID => |s, _r, _g| s,
             LP => |s, r, _g| low_pass(s, r),
             BP => |s, r, _g| band_pass(s, r),
             BP1 => |s, r, _g| unit_band_pass(s, r),
