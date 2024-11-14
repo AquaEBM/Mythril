@@ -1,5 +1,15 @@
-[workspace]
+[package]
+name = "polygraph"
+version = "0.1.0"
+edition = "2021"
 
-members = ["polygraph", "simd_util"]
+[dependencies]
 
-resolver = "2"
+simd_util = { path = "../simd_util", default-features = false }
+rtrb = "0.3"
+
+[features]
+
+default = ["std_simd"]
+std_simd = ["simd_util/std_simd"]
+core_simd_crate = ["simd_util/core_simd_crate"]

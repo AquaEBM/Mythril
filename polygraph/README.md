@@ -1,3 +1,0 @@
-# graph
-
-Audio graph implementation
