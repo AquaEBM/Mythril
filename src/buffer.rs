@@ -249,7 +249,7 @@ impl<'a, T, U> From<&'a mut BufferList<T, U>> for BufferListRefMut<'a, T, U> {
     }
 }
 
-impl<'a, T, U> BufferListRefMut<'a, T, U> {
+impl<T, U> BufferListRefMut<'_, T, U> {
     #[inline]
     pub fn len(&self) -> NonZeroUsize {
         self.len
@@ -280,7 +280,7 @@ impl<'a, T, U> BufferListRefMut<'a, T, U> {
     #[inline]
     pub fn reborrow(&mut self) -> BufferListRefMut<T, U> {
         BufferListRefMut {
-            buffers: &mut self.buffers,
+            buffers: self.buffers,
             start: self.start,
             len: self.len,
         }
@@ -298,7 +298,7 @@ pub enum GetBufferError {
     Empty,
 }
 
-impl<'a, T: SimdFloat> Buffers<'a, T> {
+impl<T: SimdFloat> Buffers<'_, T> {
     #[inline]
     pub fn len(&self) -> NonZeroUsize {
         self.buffers.len()
@@ -327,6 +327,7 @@ impl<'a, T: SimdFloat> Buffers<'a, T> {
     }
 
     #[inline]
+    #[allow(clippy::type_complexity)]
     pub fn input_shared(
         &self,
         index: usize,

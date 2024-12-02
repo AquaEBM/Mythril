@@ -61,8 +61,6 @@ pub trait Processor {
 
     fn initialize(&mut self, sr: f32, max_buffer_size: usize, max_num_clusters: usize) -> usize;
 
-    // TODO: maybe use vectors & masks in the followng methods?
-
     fn set_voice_note(&mut self, index: (usize, usize), velocity: f32, note: u8);
 
     fn deactivate_voice(&mut self, index: (usize, usize), velocity: f32);

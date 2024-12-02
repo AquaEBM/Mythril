@@ -1,4 +1,4 @@
-#![feature(portable_simd, new_zeroed_alloc)]
+#![feature(portable_simd, new_zeroed_alloc, slice_from_ptr_range, ptr_sub_ptr, box_vec_non_null)]
 
 extern crate alloc;
 

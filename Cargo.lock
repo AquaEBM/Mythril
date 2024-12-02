@@ -11,10 +11,10 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "core_simd"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#b049c5097e515f45503ac5a8d34de5f0ef75c25e"
+source = "git+https://github.com/rust-lang/portable-simd.git#49176aebc6ed496ddbea3def548adcfe1679b4bb"
 
 [[package]]
-name = "polygraph"
+name = "mythril"
 version = "0.1.0"
 dependencies = [
  "rtrb",
@@ -39,7 +39,7 @@ dependencies = [
 [[package]]
 name = "std_float"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#b049c5097e515f45503ac5a8d34de5f0ef75c25e"
+source = "git+https://github.com/rust-lang/portable-simd.git#49176aebc6ed496ddbea3def548adcfe1679b4bb"
 dependencies = [
  "core_simd",
 ]
