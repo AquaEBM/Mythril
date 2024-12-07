@@ -1,5 +1,5 @@
 use super::*;
-use core::ptr::NonNull;
+use core::{marker::PhantomData, ptr::NonNull};
 
 /// A delay buffer with a fixed, non-zero size
 #[derive(Clone, Debug)]
@@ -7,6 +7,7 @@ pub struct Delay<T> {
     start: NonNull<T>,
     end: NonNull<T>,
     current: NonNull<T>,
+    _marker: PhantomData<T>,
 }
 
 impl<T: Default> Delay<T> {
@@ -21,15 +22,14 @@ impl<T: Default> Delay<T> {
             start,
             end,
             current: start,
+            _marker: PhantomData,
         }
     }
 }
 
 impl<T> Delay<T> {
-
     #[inline]
     pub fn into_boxed_slice(self) -> (Box<[T]>, usize) {
-
         (
             unsafe { Box::from_non_null(self.as_slice().into()) },
             self.current_index(),
@@ -51,7 +51,8 @@ impl<T> Delay<T> {
 
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: see above
-        unsafe { NonNull::slice_from_raw_parts(self.start, self.len().get()).as_ref() }
+        let ptr = NonNull::slice_from_raw_parts(self.start, self.len().get());
+        unsafe { ptr.as_ref() }
     }
 
     #[inline]

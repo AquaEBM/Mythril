@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 
-simd_util = { path = "../simd_util", default-features = false }
+simd_util = { git = "https://github.com/AquaEBM/simd_util.git", default-features = false }
 rtrb = "0.3"
 
 [features]
