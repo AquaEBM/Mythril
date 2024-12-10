@@ -49,6 +49,7 @@ impl<T> Delay<T> {
         unsafe { NonZeroUsize::new_unchecked(self.end.sub_ptr(self.start)) }
     }
 
+    #[inline]
     pub fn as_slice(&self) -> &[T] {
         // SAFETY: see above
         let ptr = NonNull::slice_from_raw_parts(self.start, self.len().get());
@@ -62,16 +63,27 @@ impl<T> Delay<T> {
     }
 
     #[inline]
-    pub fn process(&mut self, buf: &mut [T]) {
+    pub fn process_sample_in_place(&mut self, sample: &mut T) {
+        // SAFETY: same as `Self::get_current`
+        mem::swap(unsafe { self.current.as_mut() }, sample);
+        // SAFETY: self.current + size_of::<T>() is within the
+        // same allocated object (or one size_of::<T>() after it), so it never overflows isize.
+        self.current = unsafe { self.current.add(1) };
+        if self.current == self.end {
+            self.current = self.start;
+        }
+    }
+
+    #[inline]
+    pub fn process_sample(&mut self, mut sample: T) -> T {
+        self.process_sample_in_place(&mut sample);
+        sample
+    }
+
+    #[inline]
+    pub fn process_buffer(&mut self, buf: &mut [T]) {
         for sample in buf {
-            // SAFETY: same as `Self::get_current`
-            mem::swap(unsafe { self.current.as_mut() }, sample);
-            // SAFETY: self.current + size_of::<T>() is within the
-            // same allocated object (or size_of::<T>() after it), so it never overflows isize.
-            self.current = unsafe { self.current.add(1) };
-            if self.current == self.end {
-                self.current = self.start;
-            }
+            self.process_sample_in_place(sample)
         }
     }
 }
