@@ -1,5 +1,5 @@
 use super::*;
-use core::{marker::PhantomData, ptr::NonNull};
+use core::{marker::PhantomData, ptr::NonNull, num::NonZeroUsize, mem};
 
 /// A delay buffer with a fixed, non-zero size
 #[derive(Clone, Debug)]
@@ -14,8 +14,8 @@ impl<T: Default> Delay<T> {
     #[inline]
     pub fn new(num_samples: NonZeroUsize) -> Self {
         let len = num_samples.get();
-        let start =
-            Box::into_non_null(Box::from_iter(iter::repeat_with(T::default).take(len))).cast();
+        let boxed_slice = iter::repeat_with(T::default).take(len).collect();
+        let start = Box::into_non_null(boxed_slice).as_non_null_ptr();
         let end = unsafe { start.add(len) };
 
         Self {
@@ -28,10 +28,17 @@ impl<T: Default> Delay<T> {
 }
 
 impl<T> Delay<T> {
+
+    #[inline]
+    pub fn current_index(&self) -> usize {
+        // SAFETY: self.current is always >= self.start
+        unsafe { self.current.offset_from_unsigned(self.start) }
+    }
+
     #[inline]
     pub fn into_boxed_slice(self) -> (Box<[T]>, usize) {
         (
-            unsafe { Box::from_non_null(self.as_slice().into()) },
+            unsafe { Box::from_non_null(self.as_non_null_slice()) },
             self.current_index(),
         )
     }
@@ -44,30 +51,15 @@ impl<T> Delay<T> {
     }
 
     #[inline]
-    pub fn len(&self) -> NonZeroUsize {
-        // SAFETY: self.start and self.end represent both edges of a NON EMPTY (boxed) slice
-        unsafe { NonZeroUsize::new_unchecked(self.end.sub_ptr(self.start)) }
-    }
-
-    #[inline]
-    pub fn as_slice(&self) -> &[T] {
-        // SAFETY: see above
-        let ptr = NonNull::slice_from_raw_parts(self.start, self.len().get());
-        unsafe { ptr.as_ref() }
-    }
-
-    #[inline]
-    pub fn current_index(&self) -> usize {
-        // SAFETY: self.current is always >= self.start
-        unsafe { self.current.sub_ptr(self.start) }
-    }
-
-    #[inline]
-    pub fn process_sample_in_place(&mut self, sample: &mut T) {
+    fn get_current_mut(&mut self) -> &mut T {
         // SAFETY: same as `Self::get_current`
-        mem::swap(unsafe { self.current.as_mut() }, sample);
+        unsafe { self.current.as_mut() }
+    }
+
+    #[inline]
+    fn wrap_current_ptr(&mut self) {
         // SAFETY: self.current + size_of::<T>() is within the
-        // same allocated object (or one size_of::<T>() after it), so it never overflows isize.
+        // same allocated object so it never overflows isize.
         self.current = unsafe { self.current.add(1) };
         if self.current == self.end {
             self.current = self.start;
@@ -75,8 +67,36 @@ impl<T> Delay<T> {
     }
 
     #[inline]
+    pub fn len(&self) -> NonZeroUsize {
+        // SAFETY: self.start and self.end represent both edges of a NON EMPTY (boxed) slice
+        unsafe { NonZeroUsize::new_unchecked(self.end.offset_from_unsigned(self.start)) }
+    }
+
+    #[inline]
+    fn as_non_null_slice(&self) -> NonNull<[T]> {
+        NonNull::slice_from_raw_parts(self.start, self.len().get())
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+
+        let slice = self.as_non_null_slice();
+        // SAFETY: see Self::len
+        unsafe { slice.as_ref() }
+    }
+
+    #[inline]
+    pub fn process_sample_in_place(&mut self, sample: &mut T) {
+        
+        mem::swap(self.get_current_mut(), sample);
+        self.wrap_current_ptr();
+    }
+
+    #[inline]
     pub fn process_sample(&mut self, mut sample: T) -> T {
-        self.process_sample_in_place(&mut sample);
+
+        sample = mem::replace(self.get_current_mut(), sample);
+        self.wrap_current_ptr();
         sample
     }
 
@@ -89,7 +109,9 @@ impl<T> Delay<T> {
 }
 
 impl<T> Drop for Delay<T> {
+    #[inline]
     fn drop(&mut self) {
-        let _b = unsafe { Box::from_non_null(self.as_slice().into()) };
+        // SAFETY: *self is dropped after this
+        let _b = unsafe { Box::from_non_null(self.as_non_null_slice()) };
     }
 }

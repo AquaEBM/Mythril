@@ -1,4 +1,5 @@
 use super::*;
+use alloc::sync::Arc;
 
 pub struct Lender<T: ?Sized> {
     ring_buffers: Vec<rtrb::Producer<Arc<T>>>,
@@ -16,7 +17,7 @@ impl<T: ?Sized> Default for Lender<T> {
 
 impl<T: ?Sized> Lender<T> {
     pub fn lend(&mut self, item: Arc<T>) {
-        for producer in self.ring_buffers.iter_mut() {
+        for producer in &mut self.ring_buffers {
             producer.push(item.clone()).unwrap();
         }
 
