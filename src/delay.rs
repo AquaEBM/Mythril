@@ -1,5 +1,5 @@
 use super::*;
-use core::{marker::PhantomData, ptr::NonNull, num::NonZeroUsize, mem};
+use core::{marker::PhantomData, mem};
 
 /// A delay buffer with a fixed, non-zero size
 #[derive(Clone, Debug)]
@@ -28,7 +28,6 @@ impl<T: Default> Delay<T> {
 }
 
 impl<T> Delay<T> {
-
     #[inline]
     pub fn current_index(&self) -> usize {
         // SAFETY: self.current is always >= self.start
@@ -79,7 +78,6 @@ impl<T> Delay<T> {
 
     #[inline]
     pub fn as_slice(&self) -> &[T] {
-
         let slice = self.as_non_null_slice();
         // SAFETY: see Self::len
         unsafe { slice.as_ref() }
@@ -87,14 +85,12 @@ impl<T> Delay<T> {
 
     #[inline]
     pub fn process_sample_in_place(&mut self, sample: &mut T) {
-        
         mem::swap(self.get_current_mut(), sample);
         self.wrap_current_ptr();
     }
 
     #[inline]
     pub fn process_sample(&mut self, mut sample: T) -> T {
-
         sample = mem::replace(self.get_current_mut(), sample);
         self.wrap_current_ptr();
         sample

@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "core_simd"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#b4f4785d9b070111b8ee9df60a5344af78479267"
+source = "git+https://github.com/rust-lang/portable-simd.git#68947612ba26221ced5ce99879f52229320e5157"
 
 [[package]]
 name = "mythril"
@@ -24,7 +24,7 @@ checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
 [[package]]
 name = "simd_util"
 version = "0.1.0"
-source = "git+https://github.com/AquaEBM/simd_util.git#d286b97765ca55fcd18b949dfe8fe81ac2988faa"
+source = "git+https://github.com/AquaEBM/simd_util.git#e7a1576162e06f525c87b38e984356c780d4680a"
 dependencies = [
  "core_simd",
  "std_float",
@@ -33,7 +33,7 @@ dependencies = [
 [[package]]
 name = "std_float"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#b4f4785d9b070111b8ee9df60a5344af78479267"
+source = "git+https://github.com/rust-lang/portable-simd.git#68947612ba26221ced5ce99879f52229320e5157"
 dependencies = [
  "core_simd",
 ]

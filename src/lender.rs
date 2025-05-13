@@ -25,7 +25,7 @@ impl<T: ?Sized> Lender<T> {
     }
 
     pub fn cleanup(&mut self) {
-        self.lent.retain(|item| Arc::strong_count(item) != 1);
+        self.lent.retain(|item| Arc::strong_count(item) > 1);
         self.ring_buffers
             .retain(|producer| !producer.is_abandoned());
     }

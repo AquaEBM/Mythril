@@ -10,5 +10,6 @@ extern crate alloc;
 
 pub mod delay;
 pub mod lender;
+pub mod buffer;
 
-use core::iter;
+use core::{iter, num::NonZeroUsize, ptr::NonNull};
