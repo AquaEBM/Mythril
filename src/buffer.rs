@@ -68,6 +68,10 @@ impl<T: Default> BufferList<T> {
     }
 }
 
+fn non_max(i: &u32) -> bool {
+    !i != 0
+}
+
 impl<T> BufferList<T> {
     /// # Safety:
     ///
@@ -92,13 +96,13 @@ impl<T> BufferList<T> {
         let num_bufs = self.list.len();
 
         for in_idx in inputs {
-            if in_idx != &u32::MAX && *in_idx as usize > num_bufs {
+            if non_max(in_idx) && *in_idx as usize > num_bufs {
                 return false;
             }
         }
 
         for (i, out_idx) in outputs.iter().enumerate() {
-            if out_idx != &u32::MAX
+            if non_max(out_idx)
                 && (*out_idx as usize > num_bufs
                     || inputs.contains(out_idx)
                     || outputs[..i].contains(out_idx))
@@ -121,9 +125,9 @@ struct BufferListRef<'a, T> {
 }
 
 fn get_buf_index(slice: &[u32], index: usize) -> Result<usize, GetBufError> {
-    slice.get(index).ok_or(GetBufError::OOB).and_then(|&i| {
-        (i == u32::MAX)
-            .then_some(i as usize)
+    slice.get(index).ok_or(GetBufError::OOB).and_then(|i| {
+        (!non_max(i))
+            .then_some(*i as usize)
             .ok_or(GetBufError::Empty)
     })
 }
@@ -160,14 +164,22 @@ impl<'a, T> BufferListRef<'a, T> {
             .then(|| unsafe { Self::new_unchecked(bufs, inputs, outputs) })
     }
 
-    fn get_input_buf(&self, index: usize) -> Result<&[T], GetBufError> {
+    fn get_input_ptr(&self, index: usize) -> Result<NonNull<[T]>, GetBufError> {
+        get_buf_index(self.inputs, index).map(|i| unsafe { get_buf(self.bufs, i, self.size.get()) })
+    }
+
+    fn get_output_ptr(&self, index: usize) -> Result<NonNull<[T]>, GetBufError> {
         get_buf_index(self.outputs, index)
-            .map(|i| unsafe { get_buf(self.bufs, i, self.size.get()).as_ref() })
+            .map(|i| unsafe { get_buf(self.bufs, i, self.size.get()) })
+    }
+
+    fn get_input_buf(&self, index: usize) -> Result<&[T], GetBufError> {
+        self.get_input_ptr(index).map(|p| unsafe { p.as_ref() })
     }
 
     fn get_output_buf(&mut self, index: usize) -> Result<&mut [T], GetBufError> {
-        get_buf_index(self.inputs, index)
-            .map(|i| unsafe { get_buf(self.bufs, i, self.size.get()).as_mut() })
+        self.get_output_ptr(index)
+            .map(|mut p| unsafe { p.as_mut() })
     }
 }
 
@@ -202,10 +214,7 @@ impl<'a, T> Buffers for BufferListRef<'a, T> {
         [Result<&[Self::Sample], GetBufError>; N],
         Option<[Result<&mut [Self::Sample], GetBufError>; M]>,
     ) {
-        let input_ptrs = inputs.map(|i| {
-            let index = get_buf_index(self.inputs, i);
-            index.map(|i| unsafe { get_buf(self.bufs, i, self.size.get()) })
-        });
+        let input_ptrs = inputs.map(|i| self.get_input_ptr(i));
 
         fn check_disgoint(slice: &[usize], mut filter: impl FnMut(&usize) -> bool) -> bool {
             for (i, e) in slice.iter().enumerate() {
@@ -222,15 +231,8 @@ impl<'a, T> Buffers for BufferListRef<'a, T> {
             true
         }
 
-        let output_ptrs = check_disgoint(&outputs, |&e| {
-            self.inputs.get(e).is_some_and(|&i| i != u32::MAX)
-        })
-        .then(|| {
-            outputs.map(|i| {
-                let index = get_buf_index(self.outputs, i);
-                index.map(|i| unsafe { get_buf(self.bufs, i, self.size.get()) })
-            })
-        });
+        let output_ptrs = check_disgoint(&outputs, |&e| self.inputs.get(e).is_some_and(non_max))
+            .then(|| outputs.map(|i| self.get_output_ptr(i)));
 
         (
             input_ptrs.map(|r| r.map(|p| unsafe { p.as_ref() })),
