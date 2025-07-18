@@ -1,242 +1,299 @@
-use core::marker;
-
 use super::*;
+use core::{fmt, marker, mem, ops, ptr, slice};
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum GetBufError {
-    OOB,
-    Empty,
+pub struct BufferList<T> {
+    ptr: NonNull<T>,
+    samples_per_buf: usize,
+    num_bufs: usize,
+    marker: marker::PhantomData<T>,
 }
 
-#[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, PartialOrd, Ord)]
-pub enum GetBufMutError {
-    Overlapping,
-    Other(GetBufError),
-}
-
-impl GetBufError {
-    pub fn is_unused(self) -> bool {
-        self == GetBufError::Empty
+impl<T: fmt::Debug> fmt::Debug for BufferList<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_list()
+            .entries((0..self.num_bufs).map(|i| unsafe { self.get_buf_unchecked(i) }))
+            .finish()
     }
 }
 
-pub trait Buffers {
-    type Sample;
-
-    fn num_inputs(&self) -> usize;
-
-    fn num_outputs(&self) -> usize;
-
-    fn num_samples(&self) -> NonZeroUsize;
-
-    fn get_input(&self, index: usize) -> Result<&[Self::Sample], GetBufError>;
-
-    fn get_output(&mut self, index: usize) -> Result<&mut [Self::Sample], GetBufError>;
-
-    fn get_many<const N: usize, const M: usize>(
-        &mut self,
-        inputs: [usize; N],
-        outputs: [usize; M],
-    ) -> (
-        [Result<&[Self::Sample], GetBufError>; N],
-        Option<[Result<&mut [Self::Sample], GetBufError>; M]>,
-    );
-}
-
-#[derive(Clone, Debug)]
-struct BufferList<T> {
-    list: Box<[NonNull<T>]>,
-    len: NonZeroUsize,
-    phantom: marker::PhantomData<T>,
-}
-
-impl<T: Default> BufferList<T> {
-    fn new(num_bufs: usize, buf_size: NonZeroUsize) -> Self {
-        Self {
-            list: iter::repeat_with(|| {
-                let boxed = Box::into_raw(Box::from_iter(
-                    iter::repeat_with(T::default).take(buf_size.get()),
-                ))
-                .as_mut_ptr();
-                unsafe { NonNull::new_unchecked(boxed) }
-            })
-            .take(num_bufs)
-            .collect(),
-            len: buf_size,
-            phantom: marker::PhantomData,
-        }
+impl<T> Default for BufferList<T> {
+    fn default() -> Self {
+        Self::empty()
     }
 }
 
-fn non_max(i: &u32) -> bool {
-    !i != 0
+unsafe impl<T: Send> Send for BufferList<T> {}
+unsafe impl<T: Sync> Sync for BufferList<T> {}
+
+impl<T> BufferList<mem::MaybeUninit<T>> {
+    pub const unsafe fn assume_init(self) -> BufferList<T> {
+        let out = BufferList {
+            ptr: self.ptr.cast(),
+            marker: marker::PhantomData,
+            samples_per_buf: self.samples_per_buf,
+            num_bufs: self.num_bufs,
+        };
+
+        mem::forget(self);
+
+        out
+    }
 }
 
 impl<T> BufferList<T> {
-    /// # Safety:
-    ///
-    /// before reading anything from the buffers, T should be properly initialized
-    /// unless T accepts any bit pattern
-    unsafe fn new_uninit(num_bufs: usize, buf_size: NonZeroUsize) -> Self {
+    pub const fn num_samples(&self) -> usize {
+        unsafe { self.samples_per_buf.unchecked_mul(self.num_bufs) }
+    }
+
+    pub const fn empty() -> Self {
         Self {
-            list: iter::repeat_with(|| {
-                let boxed = unsafe { Box::new_uninit_slice(buf_size.get()).assume_init() };
-                let pointer = Box::into_raw(boxed).as_mut_ptr();
-                unsafe { NonNull::new_unchecked(pointer) }
-            })
-            .take(num_bufs)
-            .collect(),
-            len: buf_size,
-            phantom: marker::PhantomData,
+            ptr: NonNull::dangling(),
+            samples_per_buf: 0,
+            num_bufs: 0,
+            marker: marker::PhantomData,
         }
     }
 
-    /// Validate an IO configuration with respect to the given buffer list.
-    fn validate(&mut self, inputs: &[u32], outputs: &[u32]) -> bool {
-        let num_bufs = self.list.len();
+    pub fn new(samples_per_buf: usize, num_bufs: usize) -> Self
+    where
+        T: Default,
+    {
+        let boxed = iter::repeat_with(T::default)
+            .take(num_bufs.checked_mul(samples_per_buf).unwrap())
+            .collect();
 
-        for in_idx in inputs {
-            if non_max(in_idx) && *in_idx as usize > num_bufs {
-                return false;
-            }
-        }
-
-        for (i, out_idx) in outputs.iter().enumerate() {
-            if non_max(out_idx)
-                && (*out_idx as usize > num_bufs
-                    || inputs.contains(out_idx)
-                    || outputs[..i].contains(out_idx))
-            {
-                return false;
-            }
-        }
-
-        true
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
-struct BufferListRef<'a, T> {
-    inputs: &'a [u32],
-    outputs: &'a [u32],
-    size: NonZeroUsize,
-    bufs: NonNull<NonNull<T>>,
-    phantom: marker::PhantomData<&'a mut T>,
-}
-
-fn get_buf_index(slice: &[u32], index: usize) -> Result<usize, GetBufError> {
-    slice.get(index).ok_or(GetBufError::OOB).and_then(|i| {
-        (!non_max(i))
-            .then_some(*i as usize)
-            .ok_or(GetBufError::Empty)
-    })
-}
-
-unsafe fn get_buf<T>(bufs: NonNull<NonNull<T>>, index: usize, size: usize) -> NonNull<[T]> {
-    NonNull::slice_from_raw_parts(unsafe { bufs.add(index).read() }, size)
-}
-
-impl<'a, T> BufferListRef<'a, T> {
-    /// Create a new `BufferListRef`
-    unsafe fn new_unchecked(
-        bufs: &'a mut BufferList<T>,
-        inputs: &'a [u32],
-        outputs: &'a [u32],
-    ) -> Self {
         Self {
-            inputs,
-            outputs,
-            size: bufs.len,
-            // SAFETY: it bufs.list is a valid box so non-null
-            bufs: unsafe { NonNull::new_unchecked(bufs.list.as_mut_ptr()) },
-            phantom: marker::PhantomData,
+            samples_per_buf,
+            num_bufs,
+            ptr: Box::into_non_null(boxed).as_non_null_ptr(),
+            marker: marker::PhantomData,
         }
     }
 
-    /// Create a new `BufferListRef`.
-    ///
-    /// Returns `None` if `output` has elements (excluding those `== u32::MAX`),
-    /// that are greater than bufs.size.get() or aren't unique or are contained in `inputs`.
-    ///
-    /// This function is ~ `O(n^2)`. So, be careful when passing in large slices
-    fn new(bufs: &'a mut BufferList<T>, inputs: &'a [u32], outputs: &'a [u32]) -> Option<Self> {
-        bufs.validate(inputs, outputs)
-            .then(|| unsafe { Self::new_unchecked(bufs, inputs, outputs) })
-    }
+    pub fn new_uninit(samples_per_buf: usize, num_bufs: usize) -> BufferList<mem::MaybeUninit<T>> {
+        let uninit = Box::new_uninit_slice(num_bufs.checked_mul(samples_per_buf).unwrap());
 
-    fn get_input_ptr(&self, index: usize) -> Result<NonNull<[T]>, GetBufError> {
-        get_buf_index(self.inputs, index).map(|i| unsafe { get_buf(self.bufs, i, self.size.get()) })
-    }
-
-    fn get_output_ptr(&self, index: usize) -> Result<NonNull<[T]>, GetBufError> {
-        get_buf_index(self.outputs, index)
-            .map(|i| unsafe { get_buf(self.bufs, i, self.size.get()) })
-    }
-
-    fn get_input_buf(&self, index: usize) -> Result<&[T], GetBufError> {
-        self.get_input_ptr(index).map(|p| unsafe { p.as_ref() })
-    }
-
-    fn get_output_buf(&mut self, index: usize) -> Result<&mut [T], GetBufError> {
-        self.get_output_ptr(index)
-            .map(|mut p| unsafe { p.as_mut() })
-    }
-}
-
-impl<'a, T> Buffers for BufferListRef<'a, T> {
-    type Sample = T;
-
-    fn num_inputs(&self) -> usize {
-        self.inputs.len()
-    }
-
-    fn num_outputs(&self) -> usize {
-        self.outputs.len()
-    }
-
-    fn num_samples(&self) -> NonZeroUsize {
-        self.size
-    }
-
-    fn get_input(&self, index: usize) -> Result<&[Self::Sample], GetBufError> {
-        self.get_input_buf(index)
-    }
-
-    fn get_output(&mut self, index: usize) -> Result<&mut [Self::Sample], GetBufError> {
-        self.get_output_buf(index)
-    }
-
-    fn get_many<const N: usize, const M: usize>(
-        &mut self,
-        inputs: [usize; N],
-        outputs: [usize; M],
-    ) -> (
-        [Result<&[Self::Sample], GetBufError>; N],
-        Option<[Result<&mut [Self::Sample], GetBufError>; M]>,
-    ) {
-        let input_ptrs = inputs.map(|i| self.get_input_ptr(i));
-
-        fn check_disgoint(slice: &[usize], mut filter: impl FnMut(&usize) -> bool) -> bool {
-            for (i, e) in slice.iter().enumerate() {
-                if !filter(e) {
-                    continue;
-                }
-                for b in &slice[..i] {
-                    if b == e {
-                        return false;
-                    }
-                }
-            }
-
-            true
+        BufferList {
+            samples_per_buf,
+            num_bufs,
+            ptr: Box::into_non_null(uninit).as_non_null_ptr(),
+            marker: marker::PhantomData,
         }
+    }
 
-        let output_ptrs = check_disgoint(&outputs, |&e| self.inputs.get(e).is_some_and(non_max))
-            .then(|| outputs.map(|i| self.get_output_ptr(i)));
+    pub fn new_zeroed(samples_per_buf: usize, num_bufs: usize) -> BufferList<mem::MaybeUninit<T>> {
+        let uninit = Box::new_zeroed_slice(num_bufs.checked_mul(samples_per_buf).unwrap());
 
-        (
-            input_ptrs.map(|r| r.map(|p| unsafe { p.as_ref() })),
-            output_ptrs.map(|ptrs| ptrs.map(|r| r.map(|mut p| unsafe { p.as_mut() }))),
+        BufferList {
+            samples_per_buf,
+            num_bufs,
+            ptr: Box::into_non_null(uninit).as_non_null_ptr(),
+            marker: marker::PhantomData,
+        }
+    }
+
+    pub const unsafe fn get_buf_ptr_unchecked(&self, index: usize) -> NonNull<[T]> {
+        NonNull::slice_from_raw_parts(
+            unsafe { self.ptr.add(self.samples_per_buf.unchecked_mul(index)) },
+            self.samples_per_buf,
         )
+    }
+
+    pub const fn get_buf_ptr(&self, index: usize) -> Option<NonNull<[T]>> {
+        if index < self.num_bufs {
+            Some(unsafe { self.get_buf_ptr_unchecked(index) })
+        } else {
+            None
+        }
+    }
+
+    pub const unsafe fn get_buf_unchecked(&self, index: usize) -> &[T] {
+        unsafe { self.get_buf_ptr_unchecked(index).as_ref() }
+    }
+
+    pub const unsafe fn get_buf_mut_unchecked(&mut self, index: usize) -> &mut [T] {
+        unsafe { self.get_buf_ptr_unchecked(index).as_mut() }
+    }
+
+    pub const fn get_buf(&self, index: usize) -> Option<&[T]> {
+        match self.get_buf_ptr(index) {
+            Some(ptr) => Some(unsafe { ptr.as_ref() }),
+            _ => None,
+        }
+    }
+
+    pub const fn get_buf_mut(&mut self, index: usize) -> Option<&mut [T]> {
+        match self.get_buf_ptr(index) {
+            Some(mut ptr) => Some(unsafe { ptr.as_mut() }),
+            _ => None,
+        }
+    }
+
+    pub const unsafe fn get_disjoint_unchecked_mut<const N: usize>(
+        &mut self,
+        indices: [usize; N],
+    ) -> [&mut [T]; N] {
+        const fn empty_slice<'a, T>() -> &'a mut [T] {
+            &mut []
+        }
+
+        let mut outs = [const { empty_slice() }; N];
+
+        let mut i = 0;
+        while i < N {
+            outs[i] = unsafe { self.get_buf_ptr_unchecked(indices[i]).as_mut() };
+            i += 1;
+        }
+
+        outs
+    }
+
+    pub const fn get_disjoint_mut<const N: usize>(
+        &mut self,
+        indices: [usize; N],
+    ) -> Result<[&mut [T]; N], slice::GetDisjointMutError> {
+        const fn check_disjointness<const N: usize>(
+            indices: &[usize; N],
+            len: usize,
+        ) -> Result<(), slice::GetDisjointMutError> {
+            let mut i = 0;
+
+            // no for loops in const hahahaha
+            while i < N {
+                let idx = indices[i];
+                if idx >= len {
+                    return Err(slice::GetDisjointMutError::IndexOutOfBounds);
+                }
+
+                let mut j = 0;
+                while j < i {
+                    let other_idx = indices[j];
+                    if idx == other_idx {
+                        return Err(slice::GetDisjointMutError::OverlappingIndices);
+                    }
+
+                    j += 1;
+                }
+
+                i += 1;
+            }
+
+            Ok(())
+        }
+
+        match check_disjointness(&indices, self.num_bufs) {
+            Ok(()) => Ok(unsafe { self.get_disjoint_unchecked_mut(indices) }),
+            Err(b) => Err(b),
+        }
+    }
+}
+
+impl<T> ops::Index<usize> for BufferList<T> {
+    type Output = [T];
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get_buf(index).unwrap()
+    }
+}
+
+impl<T> ops::IndexMut<usize> for BufferList<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_buf_mut(index).unwrap()
+    }
+}
+
+impl<T> Drop for BufferList<T> {
+    fn drop(&mut self) {
+        let num_samples = self.num_samples();
+        let slice = NonNull::slice_from_raw_parts(self.ptr, num_samples);
+        drop(unsafe { Box::from_non_null(slice) })
+    }
+}
+
+#[inline]
+pub fn delay_slice<T>(buf: &mut [T], delay_buf: &mut [T]) {
+    let delay_len = delay_buf.len();
+
+    if delay_len == 0 {
+        return;
+    }
+
+    let mut chunks = buf.chunks_exact_mut(delay_len);
+
+    let delay_buf_ptr = delay_buf.as_mut_ptr();
+
+    for samples in &mut chunks {
+        unsafe {
+            ptr::swap_nonoverlapping(delay_buf_ptr, samples.as_mut_ptr(), delay_len);
+        }
+    }
+
+    let rem = chunks.into_remainder();
+    let rem_len = rem.len();
+
+    unsafe {
+        ptr::swap_nonoverlapping(delay_buf_ptr, rem.as_mut_ptr(), rem_len);
+    }
+
+    delay_buf.rotate_left(rem_len);
+}
+
+#[cfg(test)]
+mod tests {
+
+    use core::array;
+
+    use super::*;
+
+    #[test]
+    pub fn it_works() {
+        const DELAY_LEN: usize = 6;
+        const NUM_DELAYS: usize = 4;
+        const NUM_SAMPLES: usize = 12;
+
+        let mut a = BufferList::new(DELAY_LEN, NUM_DELAYS);
+
+        assert!(a.get_buf(NUM_DELAYS.saturating_add(3)).is_none());
+        assert!(a.get_buf(NUM_DELAYS).is_none());
+        assert_eq!(
+            a.get_disjoint_mut([NUM_DELAYS.saturating_sub(2); 2])
+                .unwrap_err(),
+            slice::GetDisjointMutError::OverlappingIndices
+        );
+        assert_eq!(
+            a.get_disjoint_mut([NUM_DELAYS.saturating_sub(2), NUM_DELAYS.saturating_add(1)])
+                .unwrap_err(),
+            slice::GetDisjointMutError::IndexOutOfBounds,
+        );
+
+        let mut samples1: [_; NUM_SAMPLES] = array::from_fn(|i| (i + 1) as f32);
+        let mut samples2 = samples1.map(|i| i + NUM_SAMPLES as f32);
+
+        println!("buffers_before: {a:#?}");
+        println!("samples1_before: {samples1:#?}");
+        println!("samples2_before: {samples2:#?}");
+
+        let samples1_expected = array::from_fn(|i| {
+            i.checked_sub(DELAY_LEN)
+                .map(|delayed| samples1[delayed])
+                .unwrap_or_default()
+        });
+
+        let samples2_expected = array::from_fn(|i| {
+            i.checked_sub(DELAY_LEN)
+                .map(|delayed| samples2[delayed])
+                .unwrap_or_default()
+        });
+
+        let [buf1, buf2] = a.get_disjoint_mut([2, 3]).unwrap();
+
+        delay_slice(&mut samples1, buf1);
+        delay_slice(&mut samples2, buf2);
+
+        println!("buffers_after: {a:#?}");
+        println!("samples1_after: {samples1:#?}");
+        println!("samples2_after: {samples2:#?}");
+
+        assert_eq!(samples1, samples1_expected);
+        assert_eq!(samples2, samples2_expected);
     }
 }

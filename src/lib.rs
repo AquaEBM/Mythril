@@ -1,15 +1,11 @@
-#![feature(
-    portable_simd,
-    new_zeroed_alloc,
-    slice_ptr_get,
-    slice_from_ptr_range,
-    box_vec_non_null
-)]
+#![feature(portable_simd, new_zeroed_alloc, slice_ptr_get, box_vec_non_null)]
+
+// Quite a hefty bit of unsafe here. TODO: Write docs & safety comments
 
 extern crate alloc;
 
-pub mod delay;
-pub mod lender;
 pub mod buffer;
+pub mod lender;
 
-use core::{iter, num::NonZeroUsize, ptr::NonNull};
+use alloc::sync::Arc;
+use core::{iter, ptr::NonNull};

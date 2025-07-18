@@ -1,5 +1,4 @@
 use super::*;
-use alloc::sync::Arc;
 
 pub struct Lender<T: ?Sized> {
     ring_buffers: Vec<rtrb::Producer<Arc<T>>>,

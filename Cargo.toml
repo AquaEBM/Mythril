@@ -7,6 +7,7 @@ edition = "2024"
 
 simd_util = { git = "https://github.com/AquaEBM/simd_util.git", default-features = false }
 rtrb = "0.3"
+polygraph = { git = "https://github.com/AquaEBM/polygraph" }
 
 [features]
 

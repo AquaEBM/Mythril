@@ -5,14 +5,29 @@ version = 4
 [[package]]
 name = "core_simd"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#68947612ba26221ced5ce99879f52229320e5157"
+source = "git+https://github.com/rust-lang/portable-simd.git#34393475333af82cd7d0ad7099143a598b8a5625"
+
+[[package]]
+name = "fnv"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "mythril"
 version = "0.1.0"
 dependencies = [
+ "polygraph",
  "rtrb",
  "simd_util",
+]
+
+[[package]]
+name = "polygraph"
+version = "0.1.0"
+source = "git+https://github.com/AquaEBM/polygraph#b72e22ab106a6a144c9f6de7a073accd12d27c49"
+dependencies = [
+ "fnv",
 ]
 
 [[package]]
@@ -24,7 +39,7 @@ checksum = "ad8388ea1a9e0ea807e442e8263a699e7edcb320ecbcd21b4fa8ff859acce3ba"
 [[package]]
 name = "simd_util"
 version = "0.1.0"
-source = "git+https://github.com/AquaEBM/simd_util.git#e7a1576162e06f525c87b38e984356c780d4680a"
+source = "git+https://github.com/AquaEBM/simd_util.git#3ee72b9592458ad194d795fcf6060ab00ec708d6"
 dependencies = [
  "core_simd",
  "std_float",
@@ -33,7 +48,7 @@ dependencies = [
 [[package]]
 name = "std_float"
 version = "0.1.0"
-source = "git+https://github.com/rust-lang/portable-simd.git#68947612ba26221ced5ce99879f52229320e5157"
+source = "git+https://github.com/rust-lang/portable-simd.git#34393475333af82cd7d0ad7099143a598b8a5625"
 dependencies = [
  "core_simd",
 ]
